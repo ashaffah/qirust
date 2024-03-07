@@ -14,7 +14,7 @@ A simple QR code generator written in Rust using standard library.
 
 ```bash
 [dependencies]
-qirust = "0.1.2"
+qirust = "0.1.4"
 ```
 
 2. Then run cargo build command
@@ -30,7 +30,7 @@ cargo build
 content parameter is required
 
 ```bash
-generate_svg_string(content: &'static str) -> String
+generate_svg_string(content: &str) -> String
 ```
 
 ### generate_image(content, directory, filename)
@@ -38,7 +38,7 @@ generate_svg_string(content: &'static str) -> String
 content parameter is required, directory, and filename are optional
 
 ```bash
-generate_image(content: &'static str, directory: Option<&str>, filename: Option<&str>)
+generate_image(content: &str, directory: Option<&str>, filename: Option<&str>)
 ```
 
 Example :

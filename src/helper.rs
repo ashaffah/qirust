@@ -122,12 +122,12 @@ pub fn qr_to_image_and_save(qr: &QrCode, directory_path: Option<&str>, filename:
 /// # Example
 ///
 /// ```
-/// use qirust::helper::generate_image
+/// use qirust::helper::generate_image;
 ///
 /// generate_image("Hello, World!", Some("images"), Some("qr_code.png"));
 /// ```
-pub fn generate_image(content: &'static str, directory: Option<&str>, filename: Option<&str>) {
-	let text: &'static str = content;   // User-supplied Unicode text
+pub fn generate_image(content: &str, directory: Option<&str>, filename: Option<&str>) {
+	let text: &str = content;   // User-supplied Unicode text
 	let errcorlvl: QrCodeEcc = QrCodeEcc::Low;  // Error correction level
 
 	// Make and print the QR Code symbol
@@ -141,7 +141,7 @@ pub fn generate_image(content: &'static str, directory: Option<&str>, filename: 
     qr_to_image_and_save(&qr, directory, filename).unwrap();
 }
 
-/// Generates a QR Code image from the provided content and saves it to a file.
+/// Generates a QR Code SVG from the provided content.
 ///
 /// # Arguments
 ///
@@ -159,8 +159,8 @@ pub fn generate_image(content: &'static str, directory: Option<&str>, filename: 
 /// let svg_string = generate_svg_string("Hello, World!");
 /// println!("{}", svg_string);
 /// ```
-pub fn generate_svg_string(content: &'static str) -> String {
-	let text: &'static str = content;   // User-supplied Unicode text
+pub fn generate_svg_string(content: &str) -> String {
+	let text: &str = content;   // User-supplied Unicode text
 	let errcorlvl: QrCodeEcc = QrCodeEcc::Low;  // Error correction level
 
 	// Make and print the QR Code symbol
