@@ -48,6 +48,33 @@ pub fn print_qr(qr: &QrCode) {
 	println!();
 }
 
+/// Converts a QR Code object to an image and saves it to a file.
+///
+/// # Arguments
+///
+/// * `qr` - The QR Code object to convert.
+/// * `directory_path` - Optional. The directory path where the image will be saved. If not provided, the default directory is "generated".
+/// * `filename` - Optional. The name of the image file. If not provided, a timestamp-based filename will be used.
+///
+/// # Errors
+///
+/// Returns an `image::ImageError` if there is an error saving the image.
+///
+/// # Example
+///
+/// ```rust
+/// use qirust::helper::qr_to_image_and_save;
+/// use qirust::qr_lib::{QrCode, QrCodeEcc, Version};
+/// 
+/// let errcorlvl: QrCodeEcc = QrCodeEcc::Low;  // Error correction level
+/// let mut outbuffer  = vec![0u8; Version::MAX.buffer_len()];
+/// let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
+/// let qr = qirust::qr_lib::QrCode::encode_text("Hello, World!", &mut tempbuffer, &mut outbuffer,
+///     errcorlvl, Version::MIN, Version::MAX, None, true).unwrap();
+/// std::mem::drop(tempbuffer);
+/// 
+/// qr_to_image_and_save(&qr, Some("images"), Some("qr_code.png")).unwrap();
+/// ```
 pub fn qr_to_image_and_save(qr: &QrCode, directory_path: Option<&str>, filename: Option<&str>) -> Result<(), image::ImageError> {
     let border: i32 = 4;
     let size = qr.size() as u32 + 2 * border as u32;
@@ -84,6 +111,21 @@ pub fn qr_to_image_and_save(qr: &QrCode, directory_path: Option<&str>, filename:
     img.save(&Path::new(&file_path))
 }
 
+/// Generates a QR Code image from the provided content and saves it to a file.
+///
+/// # Arguments
+///
+/// * `content` - The content to encode into the QR Code.
+/// * `directory` - Optional. The directory path where the image will be saved. If not provided, the default directory is "generated".
+/// * `filename` - Optional. The name of the image file. If not provided, a timestamp-based filename will be used.
+///
+/// # Example
+///
+/// ```
+/// use qirust::helper::generate_image
+///
+/// generate_image("Hello, World!", Some("images"), Some("qr_code.png"));
+/// ```
 pub fn generate_image(content: &'static str, directory: Option<&str>, filename: Option<&str>) {
 	let text: &'static str = content;   // User-supplied Unicode text
 	let errcorlvl: QrCodeEcc = QrCodeEcc::Low;  // Error correction level
@@ -99,6 +141,24 @@ pub fn generate_image(content: &'static str, directory: Option<&str>, filename: 
     qr_to_image_and_save(&qr, directory, filename).unwrap();
 }
 
+/// Generates a QR Code image from the provided content and saves it to a file.
+///
+/// # Arguments
+///
+/// * `content` - The content to encode into the QR Code.
+///
+/// # Returns
+///
+/// A string of SVG code representing the QR Code image.
+///
+/// # Example
+///
+/// ```
+/// use qirust::helper::generate_svg_string;
+///
+/// let svg_string = generate_svg_string("Hello, World!");
+/// println!("{}", svg_string);
+/// ```
 pub fn generate_svg_string(content: &'static str) -> String {
 	let text: &'static str = content;   // User-supplied Unicode text
 	let errcorlvl: QrCodeEcc = QrCodeEcc::Low;  // Error correction level
