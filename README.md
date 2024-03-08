@@ -7,6 +7,7 @@ A simple QR code generator written in Rust using standard library.
 - [Installation](#installation)
 - [Usage](#usage)
 - [License](#license)
+- [Example](#example)
 
 ## Installation
 
@@ -45,15 +46,15 @@ content parameter is required, directory, and filename are optional, if you pref
 generate_image("hello world", None, None);
 ```
 
-### generate_image_buffer(content)
-
-content parameter is required
+### generate_image_buffer(content, border)
 
 ```rust
-generate_image_buffer(content: &str) -> ImageBuffer<Luma<u8>, Vec<u8>>
+generate_image_buffer(content: &str, border: i32) -> ImageBuffer<Luma<u8>, Vec<u8>>
 ```
 
-### Example :
+content parameter is required, border is optional, if you prefer to use default option set as None
+
+## Example
 
 ```rust
 use qirust::helper::{generate_image, generate_svg_string};
@@ -61,11 +62,25 @@ use qirust::helper::{generate_image, generate_svg_string};
 fn main() {
     generate_image("hello world", None, None); // generate_image("hello world", Some("your_image_directory"), Some("image_name"));
     generate_svg_string("hello world");
-    generate_image_buffer("hello world")
 }
 ```
 
-## Lisence
+or you can customize the appearance of the generated QR code as you want using `generate_image_buffer` function.
+
+```rust
+use qirust::helper::generate_image_buffer;
+use image::{ImageBuffer, Luma};
+
+fn main() {
+    let qr_image: ImageBuffer<Luma<u8>, Vec<u8>> = generate_image_buffer("Hello, World!", None);
+
+    let inverted_image = qr_image.map(|p| Luma([255 - p[0]]));
+
+    inverted_image.save("inverted_qr.png").unwrap();
+}
+```
+
+## License
 
 MIT License
 
