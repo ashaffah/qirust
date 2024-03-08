@@ -36,6 +36,26 @@ pub fn to_svg_string(qr: &QrCode, border: i32) -> String {
 }
 
 /// Prints the given QrCode object to the console.
+/// 
+/// # Argument
+/// 
+/// * `qr` - The QrCode object to print.
+/// 
+/// # Example
+/// 
+/// ```rust
+/// use qirust::helper::print_qr;
+/// use qirust::qr_lib::{QrCode, QrCodeEcc, Version};
+/// 
+/// let errcorlvl: QrCodeEcc = QrCodeEcc::Low;  // Error correction level
+/// let mut outbuffer  = vec![0u8; Version::MAX.buffer_len()];
+/// let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
+/// let qr = qirust::qr_lib::QrCode::encode_text("Hello, World!", &mut tempbuffer, &mut outbuffer,
+///    errcorlvl, Version::MIN, Version::MAX, None, true).unwrap();
+/// std::mem::drop(tempbuffer);
+/// 
+/// print_qr(&qr);
+/// ```
 pub fn print_qr(qr: &QrCode) {
 	let border: i32 = 4;
 	for y in -border .. qr.size() + border {
@@ -180,6 +200,7 @@ pub fn generate_svg_string(content: &str) -> String {
 /// # Arguments
 ///
 /// * `content` - The content to encode into the QR Code.
+/// * `border` - Optional. The number of border modules to add around the QR Code. If not provided, the default is 4.
 ///
 /// # Returns
 ///
@@ -190,20 +211,21 @@ pub fn generate_svg_string(content: &str) -> String {
 /// ```
 /// use qirust::helper::generate_image_buffer;
 /// 
-/// let img_buffer = generate_image_buffer("Hello, World!");
+/// let img_buffer = generate_image_buffer("Hello, World!", None); // Border is 4 by default
 /// ```
-pub fn generate_image_buffer(content: &str) -> ImageBuffer<Luma<u8>, Vec<u8>> {
-    let text: &str = content;   // User-supplied Unicode text
-	let errcorlvl: QrCodeEcc = QrCodeEcc::Low;  // Error correction level
+pub fn generate_image_buffer(content: &str, border: Option<i32>) -> ImageBuffer<Luma<u8>, Vec<u8>> {
+    let border = border.unwrap_or(4);
+    let errcorlvl = QrCodeEcc::Low;
 
-	// Make and print the QR Code symbol
     let mut outbuffer  = vec![0u8; Version::MAX.buffer_len()];
     let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
-    let qr: QrCode = QrCode::encode_text(text, &mut tempbuffer, &mut outbuffer,
+
+    let qr = QrCode::encode_text(content, &mut tempbuffer, &mut outbuffer,
         errcorlvl, Version::MIN, Version::MAX, None, true).unwrap();
-        std::mem::drop(tempbuffer);  // Optional, because tempbuffer is only needed during encode_text()
-	let border: i32 = 4;
-    let size = qr.size() as u32 + 2 * border as u32;
+
+    std::mem::drop(tempbuffer);
+
+    let size = (qr.size() + 2 * border) as u32;
     let mut img = ImageBuffer::new(size, size);
 
     for (x, y, pixel) in img.enumerate_pixels_mut() {
@@ -239,7 +261,7 @@ mod tests {
     #[test]
     fn test_generate_image_buffer() {
         let content = "Hello, world!";
-        let img = generate_image_buffer(content);
+        let img = generate_image_buffer(content, None);
 
         // The QR code for "Hello, world!" with a low error correction level
         // and a border of 4 should be 29x29 pixels.
