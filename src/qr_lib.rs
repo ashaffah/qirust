@@ -1385,3 +1385,21 @@ impl Mask {
 fn get_bit(x: u32, i: u8) -> bool {
 	(x >> i) & 1 != 0
 }
+
+// Tests whether the i'th bit of x is set to 1.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_numeric() {
+        assert_eq!(QrSegment::is_numeric("1234567890"), true);
+        assert_eq!(QrSegment::is_numeric("1234abc"), false);
+    }
+
+    #[test]
+    fn test_is_alphanumeric() {
+        assert_eq!(QrSegment::is_alphanumeric("HELLO WORLD"), true);
+        assert_eq!(QrSegment::is_alphanumeric("Hello World"), false);
+    }
+}
