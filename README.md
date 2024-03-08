@@ -74,9 +74,13 @@ use image::{ImageBuffer, Luma};
 fn main() {
     let qr_image: ImageBuffer<Luma<u8>, Vec<u8>> = generate_image_buffer("Hello, World!", None);
 
-    let inverted_image = qr_image.map(|p| Luma([255 - p[0]]));
-
-    inverted_image.save("inverted_qr.png").unwrap();
+    let inverted_image_buffer = ImageBuffer::from_fn(qr_image.width(), qr_image.height(), |x, y| {
+        let pixel = qr_image.get_pixel(x, y);
+        let inverted_pixel = Luma([255 - pixel[0]]);
+        inverted_pixel
+    });
+    let inverted_image_path = "./inverted_image.png";
+    inverted_image_buffer.save(inverted_image_path).unwrap();
 }
 ```
 
