@@ -14,7 +14,7 @@ A simple QR code generator written in Rust using standard library.
 
 ```bash
 [dependencies]
-qirust = "0.1.4"
+qirust = "0.1.5"
 ```
 
 2. Then run cargo build command
@@ -27,28 +27,41 @@ cargo build
 
 ### generate_svg_string(content)
 
-content parameter is required
-
-```bash
+```rust
 generate_svg_string(content: &str) -> String
 ```
 
+content parameter is required
+
 ### generate_image(content, directory, filename)
 
-content parameter is required, directory, and filename are optional
-
-```bash
+```rust
 generate_image(content: &str, directory: Option<&str>, filename: Option<&str>)
 ```
 
-Example :
+content parameter is required, directory, and filename are optional, if you prefer to use default option set as None
 
-```bash
+```rust
+generate_image("hello world", None, None);
+```
+
+### generate_image_buffer(content)
+
+content parameter is required
+
+```rust
+generate_image_buffer(content: &str) -> ImageBuffer<Luma<u8>, Vec<u8>>
+```
+
+### Example :
+
+```rust
 use qirust::helper::{generate_image, generate_svg_string};
 
 fn main() {
-    generate_image("cok", None, None);
-    generate_svg_string("cokk");
+    generate_image("hello world", None, None); // generate_image("hello world", Some("your_image_directory"), Some("image_name"));
+    generate_svg_string("hello world");
+    generate_image_buffer("hello world")
 }
 ```
 
