@@ -80,45 +80,26 @@ fn main() {
 }
 ```
 
-or you can customize the appearance of the generated QR code as desired using the `generate_image_buffer` function just like the `generate_colored_buffer` function does. (but I have already created it and you can use it)
+or you can customize the appearance of the generated QR code as desired using the `generate_image_buffer` function.
 
 ```rust
-use qirust::helper::{ generate_image_buffer, mix_colors };
-use image::ImageBuffer;
-
-pub fn generate_colored_buffer(
-    content: &str,
-    border: Option<i32>,
-    fg_color: Rgb<u8>,
-    bg_color: Rgb<u8>
-) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
-    let qr_image = generate_image_buffer(content, border, Some(fg_color), Some(bg_color));
-
-    let colored_image_buffer = ImageBuffer::from_fn(qr_image.width(), qr_image.height(), |x, y| {
-        let pixel = qr_image.get_pixel(x, y);
-        Rgb([
-            mix_colors(pixel[0], fg_color[0], bg_color[0]),
-            mix_colors(pixel[0], fg_color[1], bg_color[1]),
-            mix_colors(pixel[0], fg_color[2], bg_color[2]),
-        ])
-    });
-
-    colored_image_buffer
-}
+use qirust::helper::generate_image_buffer;
+use image::Rgb;
 
 fn main() {
     let foreground_color = Rgb([255, 0, 0]); // Red foreground color
     let background_color = Rgb([0, 0, 0]); // Black background color
-    let colored_image_buffer = generate_colored_buffer(
+    let colored_image_buffer = generate_image_buffer(
         "Hello, World!",
         None,
-        foreground_color,
-        background_color
+        Some(foreground_color),
+        Some(background_color)
     );
 
     let colored_image_path = "./colored_image.png";
     colored_image_buffer.save(colored_image_path).unwrap();
 }
+
 ```
 
 ## License
