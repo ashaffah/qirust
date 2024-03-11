@@ -1,5 +1,7 @@
 # qirust
 
+[![crates.io](https://img.shields.io/crates/v/qirust.svg)](https://crates.io/crates/qirust)
+
 A simple QR code generator written in Rust using standard library.
 
 ## Contents
@@ -15,7 +17,7 @@ A simple QR code generator written in Rust using standard library.
 
 ```bash
 [dependencies]
-qirust = "0.1.7"
+qirust = "0.1.8"
 ```
 
 2. Then run cargo build command
@@ -46,13 +48,26 @@ content parameter is required, directory, and filename are optional, if you pref
 generate_image("hello world", None, None);
 ```
 
-### generate_image_buffer(content, border)
+### mix_colors(pixel, foreground, background)
 
 ```rust
-generate_image_buffer(content: &str, border: i32) -> ImageBuffer<Luma<u8>, Vec<u8>>
+mix_colors(pixel: u8, foreground: u8, background: u8) -> u8
 ```
 
-content parameter is required, border is optional, if you prefer to use default option set as None
+pixel, foreground, and background parameters are required
+
+### generate_image_buffer(content, border, fg_color, bg_color)
+
+```rust
+generate_image_buffer(
+    content: &str,
+    border: Option<i32>,
+    fg_color: Option<Rgb<u8>>,
+    bg_color: Option<Rgb<u8>>
+) -> ImageBuffer<Rgb<u8>, Vec<u8>>
+```
+
+content parameter is required, border, fg_color, and bg_color are optional, if you prefer to use default option set as None
 
 ## Example
 
@@ -65,22 +80,44 @@ fn main() {
 }
 ```
 
-or you can customize the appearance of the generated QR code as you want using `generate_image_buffer` function.
+or you can customize the appearance of the generated QR code as desired using the `generate_image_buffer` function just like the `generate_colored_buffer` function does. (but I have already created it and you can use it)
 
 ```rust
-use qirust::helper::generate_image_buffer;
-use image::{ImageBuffer, Luma};
+use qirust::helper::{ generate_image_buffer, mix_colors };
+use image::ImageBuffer;
+
+pub fn generate_colored_buffer(
+    content: &str,
+    border: Option<i32>,
+    fg_color: Rgb<u8>,
+    bg_color: Rgb<u8>
+) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
+    let qr_image = generate_image_buffer(content, border, Some(fg_color), Some(bg_color));
+
+    let colored_image_buffer = ImageBuffer::from_fn(qr_image.width(), qr_image.height(), |x, y| {
+        let pixel = qr_image.get_pixel(x, y);
+        Rgb([
+            mix_colors(pixel[0], fg_color[0], bg_color[0]),
+            mix_colors(pixel[0], fg_color[1], bg_color[1]),
+            mix_colors(pixel[0], fg_color[2], bg_color[2]),
+        ])
+    });
+
+    colored_image_buffer
+}
 
 fn main() {
-    let qr_image: ImageBuffer<Luma<u8>, Vec<u8>> = generate_image_buffer("Hello, World!", None);
+    let foreground_color = Rgb([255, 0, 0]); // Red foreground color
+    let background_color = Rgb([0, 0, 0]); // Black background color
+    let colored_image_buffer = generate_colored_buffer(
+        "Hello, World!",
+        None,
+        foreground_color,
+        background_color
+    );
 
-    let inverted_image_buffer = ImageBuffer::from_fn(qr_image.width(), qr_image.height(), |x, y| {
-        let pixel = qr_image.get_pixel(x, y);
-        let inverted_pixel = Luma([255 - pixel[0]]);
-        inverted_pixel
-    });
-    let inverted_image_path = "./inverted_image.png";
-    inverted_image_buffer.save(inverted_image_path).unwrap();
+    let colored_image_path = "./colored_image.png";
+    colored_image_buffer.save(colored_image_path).unwrap();
 }
 ```
 
