@@ -247,51 +247,6 @@ pub fn mix_colors(pixel: u8, foreground: u8, background: u8) -> u8 {
         ((255 - (pixel as u16)) * (background as u16)) / 255) as u8
 }
 
-/// Generates a colored QR Code image buffer from the provided content.
-///
-/// # Arguments
-///
-/// * `data` - The content to encode into the QR Code.
-/// * `border` - Optional. The number of border modules to add around the QR Code. If not provided, the default is 4.
-/// * `fg_color` - The foreground color of the QR Code.
-/// * `bg_color` - The background color of the QR Code.
-///
-/// # Returns
-///
-/// An `ImageBuffer` representing the colored QR Code image.
-///
-/// # Example
-///
-/// ```rust
-/// use qirust::helper::generate_colored_buffer;
-/// use image::Rgb;
-///
-/// let data = "Hello, World!";
-/// let foreground_color = Rgb([255, 0, 0]); // Red
-/// let background_color = Rgb([0, 0, 255]); // Blue
-///
-/// let colored_qr = generate_colored_buffer(data, None, foreground_color, background_color);
-/// ```
-pub fn generate_colored_buffer(
-    content: &str,
-    border: Option<i32>,
-    fg_color: Rgb<u8>,
-    bg_color: Rgb<u8>
-) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
-    let qr_image = generate_image_buffer(content, border, Some(fg_color), Some(bg_color));
-
-    let colored_image_buffer = ImageBuffer::from_fn(qr_image.width(), qr_image.height(), |x, y| {
-        let pixel = qr_image.get_pixel(x, y);
-        Rgb([
-            mix_colors(pixel[0], fg_color[0], bg_color[0]),
-            mix_colors(pixel[0], fg_color[1], bg_color[1]),
-            mix_colors(pixel[0], fg_color[2], bg_color[2]),
-        ])
-    });
-
-    colored_image_buffer
-}
-
 /// Generates a QR Code image buffer from the provided content.
 ///
 /// # Arguments
@@ -352,7 +307,17 @@ pub fn generate_image_buffer(
         };
     }
 
-    img
+    // Apply color mixing here
+    let colored_image_buffer = ImageBuffer::from_fn(img.width(), img.height(), |x, y| {
+        let pixel = img.get_pixel(x, y);
+        Rgb([
+            mix_colors(pixel[0], foreground_color[0], background_color[0]),
+            mix_colors(pixel[0], foreground_color[1], background_color[1]),
+            mix_colors(pixel[0], foreground_color[2], background_color[2]),
+        ])
+    });
+
+    colored_image_buffer
 }
 
 // Tests
