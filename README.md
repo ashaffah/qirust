@@ -17,7 +17,7 @@ A simple QR code generator written in Rust using standard library.
 
 ```bash
 [dependencies]
-qirust = "0.1.8"
+qirust = "0.1.9"
 ```
 
 2. Then run cargo build command
