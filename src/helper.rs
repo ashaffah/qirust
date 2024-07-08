@@ -171,7 +171,6 @@ pub fn generate_image(content: &str, directory: Option<&str>, filename: Option<&
     ).unwrap();
     // Note: qr has a reference to outbuffer, so outbuffer needs to outlive qr
     std::mem::drop(tempbuffer); // Optional, because tempbuffer is only needed during encode_text()
-    print_qr(&qr);
     qr_to_image_and_save(&qr, directory, filename).unwrap();
 }
 
@@ -212,8 +211,6 @@ pub fn generate_svg_string(content: &str) -> String {
     ).unwrap();
     // Note: qr has a reference to outbuffer, so outbuffer needs to outlive qr
     std::mem::drop(tempbuffer); // Optional, because tempbuffer is only needed during encode_text()
-    print_qr(&qr);
-    println!("{}", to_svg_string(&qr, 4));
     to_svg_string(&qr, 4)
 }
 
