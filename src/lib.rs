@@ -1,2 +1,2 @@
-pub mod qr_lib;
+pub mod qrcode;
 pub mod helper;

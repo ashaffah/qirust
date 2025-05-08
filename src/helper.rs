@@ -1,4 +1,4 @@
-use crate::qr_lib::{ QrCode, QrCodeEcc, Version };
+use crate::qrcode::{ QrCode, QrCodeEcc, Version };
 
 use image::{ ImageBuffer, Luma, Rgb };
 use std::path::Path;
