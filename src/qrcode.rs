@@ -1,3 +1,8 @@
+//! QR code encoding functionality.
+//!
+//! This module provides the core logic for encoding data into QR codes, supporting the QR Code Model
+//! 2 specification. It includes structs and functions for creating QR codes with customizable versions
+//! (1–40), error correction levels, and data modes (numeric, alphanumeric, byte, ECI).
 #![forbid(unsafe_code)]
 #![allow(unused_assignments)]
 #![allow(dead_code)]
@@ -5,25 +10,38 @@ use core::convert::TryFrom;
 
 /*---- QrCode functionality ----*/
 
-/// A QR Code symbol, which is a type of two-dimension barcode.
+/// A QR Code symbol, representing a square grid of dark and light modules.
 ///
-/// Invented by Denso Wave and described in the ISO/IEC 18004 standard.
+/// This struct supports QR Code Model 2, covering versions 1 to 40, all four error correction levels,
+/// and four encoding modes (numeric, alphanumeric, byte, ECI). Instances are immutable after creation.
 ///
-/// Instances of this struct represent an immutable square grid of dark and light cells.
-/// The impl provides static factory functions to create a QR Code from text or binary data.
-/// The struct and impl cover the QR Code Model 2 specification, supporting all versions
-/// (sizes) from 1 to 40, all 4 error correction levels, and 4 character encoding modes.
+/// # Creation
 ///
-/// Ways to create a QR Code object:
+/// - High-level: Use [`encode_text`] or [`encode_binary`].
+/// - Mid-level: Use [`encode_segments_to_codewords`] and [`encode_codewords`].
+/// - Low-level: Directly construct with [`encode_codewords`].
 ///
-/// - High level: Take the payload data and call `QrCode::encode_text()` or `QrCode::encode_binary()`.
-/// - Mid level: Custom-make the list of segments and call
-///   `QrCode::encode_segments_to_codewords()` and then `QrCode::encode_codewords()`.
-/// - Low level: Custom-make the array of data codeword bytes (including segment
-///   headers and final padding, excluding error correction codewords), supply the
-///   appropriate version number, and call the `QrCode::encode_codewords()` constructor.
+/// # Example
 ///
-/// (Note that all ways require supplying the desired error correction level and various byte buffers.)
+/// ```rust
+/// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
+///
+/// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
+/// let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
+///
+/// let qr = QrCode::encode_text(
+///     "Hello, World!",
+///     &mut tempbuffer,
+///     &mut outbuffer,
+///     QrCodeEcc::Low,
+///     Version::MIN,
+///     Version::MAX,
+///     None,
+///     true,
+/// ).unwrap();
+///
+/// println!("Version: {}", qr.version().value());
+/// ```
 pub struct QrCode<'a> {
     // The width and height of this QR Code, measured in modules, between
     // 21 and 177 (inclusive). This is equal to version * 4 + 17.
@@ -37,35 +55,46 @@ pub struct QrCode<'a> {
 impl<'a> QrCode<'a> {
     /*---- Static factory functions (high level) ----*/
 
-    /// Encodes the given text string to a QR Code, returning a wrapped `QrCode` if successful.
-    /// If the data is too long to fit in any version in the given range
-    /// at the given ECC level, then `Err` is returned.
+    /// Encodes a text string into a QR code.
     ///
-    /// The smallest possible QR Code version within the given range is automatically
-    /// chosen for the output. Iff boostecl is `true`, then the ECC level of the result
-    /// may be higher than the ecl argument if it can be done without increasing the
-    /// version. The mask number is either between 0 to 7 (inclusive) to force that
-    /// mask, or `None` to automatically choose an appropriate mask (which may be slow).
+    /// Automatically selects the smallest version within the given range that can hold the data.
+    /// If `boostecl` is `true`, the error correction level may be increased if it doesn't increase
+    /// the version. The `mask` can be `None` for automatic selection (slower) or a value from 0 to 7.
     ///
-    /// About the slices, letting len = maxversion.buffer_len():
-    /// - Before calling the function:
-    ///   - The slices tempbuffer and outbuffer each must have a length of at least len.
-    ///   - If a slice is longer than len, then the function will not
-    ///     read from or write to the suffix array[len .. array.len()].
-    ///   - The initial values of both slices can be arbitrary
-    ///     because the function always writes before reading.
-    /// - After the function returns, both slices have no guarantee on what values are stored.
+    /// # Parameters
     ///
-    /// If successful, the resulting QR Code may use numeric,
-    /// alphanumeric, or byte mode to encode the text.
+    /// - `text`: The text to encode.
+    /// - `tempbuffer`: Temporary buffer, at least [`Version::MAX.buffer_len`] bytes.
+    /// - `outbuffer`: Output buffer, at least [`Version::MAX.buffer_len`] bytes.
+    /// - `ecl`: Error correction level.
+    /// - `minversion`: Minimum QR code version.
+    /// - `maxversion`: Maximum QR code version.
+    /// - `mask`: Optional mask pattern.
+    /// - `boostecl`: Whether to boost error correction if possible.
     ///
-    /// In the most optimistic case, a QR Code at version 40 with low ECC
-    /// can hold any UTF-8 string up to 2953 bytes, or any alphanumeric string
-    /// up to 4296 characters, or any digit string up to 7089 characters.
-    /// These numbers represent the hard upper limit of the QR Code standard.
+    /// # Returns
     ///
-    /// Please consult the QR Code specification for information on
-    /// data capacities per version, ECC level, and text encoding mode.
+    /// A `Result` containing the QR code or a [`DataTooLong`] error if the data is too long.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
+    ///
+    /// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
+    /// let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
+    ///
+    /// let qr = QrCode::encode_text(
+    ///     "Hello, World!",
+    ///     &mut tempbuffer,
+    ///     &mut outbuffer,
+    ///     QrCodeEcc::Low,
+    ///     Version::MIN,
+    ///     Version::MAX,
+    ///     None,
+    ///     true,
+    /// ).unwrap();
+    /// ```
     pub fn encode_text<'b>(
         text: &str,
         tempbuffer: &'b mut [u8],
@@ -122,34 +151,25 @@ impl<'a> QrCode<'a> {
         Ok(Self::encode_codewords(outbuffer, datacodewordslen, tempbuffer, ecl, version, mask))
     }
 
-    /// Encodes the given binary data to a QR Code, returning a wrapped `QrCode` if successful.
-    /// If the data is too long to fit in any version in the given range
-    /// at the given ECC level, then `Err` is returned.
+    /// Encodes binary data into a QR code.
     ///
-    /// The smallest possible QR Code version within the given range is automatically
-    /// chosen for the output. Iff boostecl is `true`, then the ECC level of the result
-    /// may be higher than the ecl argument if it can be done without increasing the
-    /// version. The mask number is either between 0 to 7 (inclusive) to force that
-    /// mask, or `None` to automatically choose an appropriate mask (which may be slow).
+    /// Similar to [`encode_text`], but for arbitrary byte data. The input data must fit within the
+    /// specified version range and error correction level.
     ///
-    /// About the slices, letting len = maxversion.buffer_len():
-    /// - Before calling the function:
-    ///   - The slices dataandtempbuffer and outbuffer each must have a length of at least len.
-    ///   - If a slice is longer than len, then the function will not
-    ///     read from or write to the suffix array[len .. array.len()].
-    ///   - The input slice range dataandtempbuffer[0 .. datalen] should normally be
-    ///     valid UTF-8 text, but is not required by the QR Code standard.
-    ///   - The initial values of dataandtempbuffer[datalen .. len] and outbuffer[0 .. len]
-    ///     can be arbitrary because the function always writes before reading.
-    /// - After the function returns, both slices have no guarantee on what values are stored.
+    /// # Parameters
     ///
-    /// If successful, the resulting QR Code will use byte mode to encode the data.
+    /// - `dataandtempbuffer`: Buffer containing data (first `datalen` bytes) and temporary space.
+    /// - `datalen`: Length of the data to encode.
+    /// - `outbuffer`: Output buffer, at least [`Version::MAX.buffer_len`] bytes.
+    /// - `ecl`: Error correction level.
+    /// - `minversion`: Minimum QR code version.
+    /// - `maxversion`: Maximum QR code version.
+    /// - `mask`: Optional mask pattern.
+    /// - `boostecl`: Whether to boost error correction if possible.
     ///
-    /// In the most optimistic case, a QR Code at version 40 with low ECC can hold any byte
-    /// sequence up to length 2953. This is the hard upper limit of the QR Code standard.
+    /// # Returns
     ///
-    /// Please consult the QR Code specification for information on
-    /// data capacities per version, ECC level, and text encoding mode.
+    /// A `Result` containing the QR code or a [`DataTooLong`] error.
     pub fn encode_binary<'b>(
         dataandtempbuffer: &'b mut [u8],
         datalen: usize,
@@ -365,11 +385,15 @@ impl<'a> QrCode<'a> {
         )
     }
 
-    /// Returns the color of the module (pixel) at the given coordinates,
-    /// which is `false` for light or `true` for dark.
+    /// Returns the color of the module at the given coordinates.
     ///
-    /// The top left corner has the coordinates (x=0, y=0). If the given
-    /// coordinates are out of bounds, then `false` (light) is returned.
+    /// Returns `true` for dark modules and `false` for light modules. Coordinates outside the QR
+    /// code's bounds return `false`.
+    ///
+    /// # Parameters
+    ///
+    /// - `x`: X-coordinate (0 is left).
+    /// - `y`: Y-coordinate (0 is top).
     pub fn get_module(&self, x: i32, y: i32) -> bool {
         let range = 0..self.size();
         range.contains(&x) && range.contains(&y) && self.get_module_bounded(x as u8, y as u8)
@@ -1020,16 +1044,16 @@ static NUM_ERROR_CORRECTION_BLOCKS: [[i8; 41]; 4] = [
 
 /*---- QrCodeEcc functionality ----*/
 
-/// The error correction level in a QR Code symbol.
+/// Error correction level for a QR code.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum QrCodeEcc {
-    /// The QR Code can tolerate about  7% erroneous codewords.
+    /// Tolerates ~7% erroneous codewords.
     Low,
-    /// The QR Code can tolerate about 15% erroneous codewords.
+    /// Tolerates ~15% erroneous codewords.
     Medium,
-    /// The QR Code can tolerate about 25% erroneous codewords.
+    /// Tolerates ~25% erroneous codewords.
     Quartile,
-    /// The QR Code can tolerate about 30% erroneous codewords.
+    /// Tolerates ~30% erroneous codewords.
     High,
 }
 
@@ -1059,18 +1083,10 @@ impl QrCodeEcc {
 
 /*---- QrSegment functionality ----*/
 
-/// A segment of character/binary/control data in a QR Code symbol.
+/// A segment of data in a QR code.
 ///
-/// Instances of this struct are immutable.
-///
-/// The mid-level way to create a segment is to take the payload data
-/// and call a static factory function such as `QrSegment::make_numeric()`.
-/// The low-level way to create a segment is to custom-make the bit buffer
-/// and call the `QrSegment::new()` constructor with appropriate values.
-///
-/// This segment struct imposes no length restrictions, but QR Codes have restrictions.
-/// Even in the most favorable conditions, a QR Code can only hold 7089 characters of data.
-/// Any segment longer than this is meaningless for the purpose of generating QR Codes.
+/// Supports numeric, alphanumeric, byte, or ECI modes. Segments are immutable and created using
+/// factory functions like [`make_numeric`], [`make_alphanumeric`], or [`make_bytes`].
 pub struct QrSegment<'a> {
     // The mode indicator of this segment. Accessed through mode().
     mode: QrSegmentMode,
@@ -1089,20 +1105,29 @@ pub struct QrSegment<'a> {
 }
 
 impl<'a> QrSegment<'a> {
-    /*---- Static factory functions (mid level) ----*/
-
-    /// Returns a segment representing the given binary data encoded in byte mode.
+    /// Creates a segment for binary data in byte mode.
     ///
-    /// All input byte slices are acceptable.
+    /// # Parameters
     ///
-    /// Any text string can be converted to UTF-8 bytes and encoded as a byte mode segment.
+    /// - `data`: The byte data to encode.
+    ///
+    /// # Returns
+    ///
+    /// A new `QrSegment` in byte mode.
     pub fn make_bytes(data: &'a [u8]) -> Self {
         QrSegment::new(QrSegmentMode::Byte, data.len(), data, data.len().checked_mul(8).unwrap())
     }
 
-    /// Returns a segment representing the given string of decimal digits encoded in numeric mode.
+    /// Creates a segment for a string of decimal digits in numeric mode.
     ///
-    /// Panics if the string contains non-digit characters.
+    /// # Parameters
+    ///
+    /// - `text`: A string containing only digits (0–9).
+    /// - `buf`: A buffer for storing encoded data.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `text` contains non-digit characters.
     pub fn make_numeric(text: &str, buf: &'a mut [u8]) -> Self {
         let mut bb = BitBuffer::new(buf);
         let mut accumdata: u32 = 0;
@@ -1124,12 +1149,18 @@ impl<'a> QrSegment<'a> {
         QrSegment::new(QrSegmentMode::Numeric, text.len(), bb.data, bb.length)
     }
 
-    /// Returns a segment representing the given text string encoded in alphanumeric mode.
+    /// Creates a segment for alphanumeric text.
     ///
-    /// The characters allowed are: 0 to 9, A to Z (uppercase only), space,
-    /// dollar, percent, asterisk, plus, hyphen, period, slash, colon.
+    /// Allowed characters: 0–9, A–Z (uppercase), space, `$`, `%`, `*`, `+`, `-`, `.`, `/`, `:`.
     ///
-    /// Panics if the string contains non-encodable characters.
+    /// # Parameters
+    ///
+    /// - `text`: The alphanumeric text to encode.
+    /// - `buf`: A buffer for storing encoded data.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `text` contains invalid characters.
     pub fn make_alphanumeric(text: &str, buf: &'a mut [u8]) -> Self {
         let mut bb = BitBuffer::new(buf);
         let mut accumdata: u32 = 0;
@@ -1275,7 +1306,7 @@ static ALPHANUMERIC_CHARSET: &str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-.
 
 /*---- QrSegmentMode functionality ----*/
 
-/// Describes how a segment's data bits are interpreted.
+/// Describes the encoding mode of a QR segment.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum QrSegmentMode {
     Numeric,
@@ -1317,9 +1348,7 @@ impl QrSegmentMode {
 
 /*---- BitBuffer functionality ----*/
 
-/// An appendable sequence of bits (0s and 1s).
-///
-/// Mainly used by QrSegment.
+/// A buffer for appending bits.
 pub struct BitBuffer<'a> {
     data: &'a mut [u8],
 
@@ -1361,7 +1390,7 @@ impl<'a> BitBuffer<'a> {
 
 /*---- Miscellaneous values ----*/
 
-/// The error type when the supplied data does not fit any QR Code version.
+/// Error type for when data exceeds QR code capacity.
 ///
 /// Ways to handle this exception include:
 ///
@@ -1373,7 +1402,9 @@ impl<'a> BitBuffer<'a> {
 /// - Propagate the error upward to the caller/user.
 #[derive(Debug, Clone)]
 pub enum DataTooLong {
+    /// A segment is too long for the chosen mode.
     SegmentTooLong,
+    /// Data length exceeds capacity.
     DataOverCapacity(usize, usize),
 }
 
@@ -1387,7 +1418,7 @@ impl core::fmt::Display for DataTooLong {
     }
 }
 
-/// A number between 1 and 40 (inclusive).
+/// A QR code version (1–40).
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Version(u8);
 
@@ -1422,7 +1453,7 @@ impl Version {
     }
 }
 
-/// A number between 0 and 7 (inclusive).
+/// A mask pattern (0–7).
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Mask(u8);
 
