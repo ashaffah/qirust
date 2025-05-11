@@ -1,3 +1,7 @@
+//! Utilities for rendering QR codes.
+//!
+//! This module provides functions to render QR codes as console output, PNG images, or SVGs, with
+//! options for styling (e.g., logo embedding, custom colors, frames).
 use crate::qrcode::{ QrCode, QrCodeEcc, Version };
 
 use image::{
@@ -12,9 +16,41 @@ use std::{ env, fs, path::{ Path, PathBuf }, time::{ SystemTime, UNIX_EPOCH } };
 
 /*---- Utilities ----*/
 
-// Returns a string of SVG code for an image depicting
-// the given QR Code, with the given number of border modules.
-// The string always uses Unix newlines (\n), regardless of the platform.
+/// Generates an SVG string for a QR code.
+///
+/// The SVG uses Unix newlines (`\n`) and includes a white background with black modules.
+///
+/// # Parameters
+///
+/// - `qr`: The QR code to render.
+/// - `border`: Number of border modules (must be non-negative).
+///
+/// # Returns
+///
+/// A string containing the SVG code.
+///
+/// # Example
+///
+/// ```rust
+/// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
+/// use qirust::helper::to_svg_string;
+///
+/// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
+/// let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
+/// let qr = QrCode::encode_text(
+///     "Hello, World!",
+///     &mut tempbuffer,
+///     &mut outbuffer,
+///     QrCodeEcc::Low,
+///     Version::MIN,
+///     Version::MAX,
+///     None,
+///     true,
+/// ).unwrap();
+///
+/// let svg = to_svg_string(&qr, 4);
+/// println!("{}", svg);
+/// ```
 pub fn to_svg_string(qr: &QrCode, border: i32) -> String {
     assert!(border >= 0, "Border must be non-negative");
     let mut result = String::new();
@@ -43,24 +79,32 @@ pub fn to_svg_string(qr: &QrCode, border: i32) -> String {
     result
 }
 
-/// Prints the given QrCode object to the console.
+/// Prints a QR code to the console using ASCII characters.
 ///
-/// # Argument
+/// Uses `█` for dark modules and spaces for light modules, with a 4-module border.
 ///
-/// * `qr` - The QrCode object to print.
+/// # Parameters
+///
+/// - `qr`: The QR code to print.
 ///
 /// # Example
 ///
 /// ```rust
+/// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
 /// use qirust::helper::print_qr;
-/// use qirust::qr_lib::{QrCode, QrCodeEcc, Version};
 ///
-/// let errcorlvl: QrCodeEcc = QrCodeEcc::Low;  // Error correction level
-/// let mut outbuffer  = vec![0u8; Version::MAX.buffer_len()];
+/// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
 /// let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
-/// let qr = qirust::qr_lib::QrCode::encode_text("Hello, World!", &mut tempbuffer, &mut outbuffer,
-///    errcorlvl, Version::MIN, Version::MAX, None, true).unwrap();
-/// std::mem::drop(tempbuffer);
+/// let qr = QrCode::encode_text(
+///     "Hello, World!",
+///     &mut tempbuffer,
+///     &mut outbuffer,
+///     QrCodeEcc::Low,
+///     Version::MIN,
+///     Version::MAX,
+///     None,
+///     true,
+/// ).unwrap();
 ///
 /// print_qr(&qr);
 /// ```
@@ -76,32 +120,38 @@ pub fn print_qr(qr: &QrCode) {
     println!();
 }
 
-/// Converts a QR Code object to an image and saves it to a file.
+/// Saves a QR code as a PNG image.
 ///
-/// # Arguments
+/// # Parameters
 ///
-/// * `qr` - The QR Code object to convert.
-/// * `directory_path` - Optional. The directory path where the image will be saved. If not provided, the default directory is "generated".
-/// * `filename` - Optional. The name of the image file. If not provided, a timestamp-based filename will be used.
+/// - `qr`: The QR code to render.
+/// - `directory_path`: Optional directory path (defaults to "generated").
+/// - `filename`: Optional filename (defaults to a timestamp).
 ///
-/// # Errors
+/// # Returns
 ///
-/// Returns an `image::ImageError` if there is an error saving the image.
+/// A `Result` indicating success or an [`image::ImageError`] on failure.
 ///
 /// # Example
 ///
 /// ```rust
+/// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
 /// use qirust::helper::qr_to_image_and_save;
-/// use qirust::qr_lib::{QrCode, QrCodeEcc, Version};
 ///
-/// let errcorlvl: QrCodeEcc = QrCodeEcc::Low;  // Error correction level
-/// let mut outbuffer  = vec![0u8; Version::MAX.buffer_len()];
+/// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
 /// let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
-/// let qr = qirust::qr_lib::QrCode::encode_text("Hello, World!", &mut tempbuffer, &mut outbuffer,
-///     errcorlvl, Version::MIN, Version::MAX, None, true).unwrap();
-/// std::mem::drop(tempbuffer);
+/// let qr = QrCode::encode_text(
+///     "Hello, World!",
+///     &mut tempbuffer,
+///     &mut outbuffer,
+///     QrCodeEcc::Low,
+///     Version::MIN,
+///     Version::MAX,
+///     None,
+///     true,
+/// ).unwrap();
 ///
-/// qr_to_image_and_save(&qr, Some("images"), Some("qr_code")).unwrap();
+/// qr_to_image_and_save(&qr, Some("output"), Some("qr_code")).unwrap();
 /// ```
 pub fn qr_to_image_and_save(
     qr: &QrCode,
@@ -142,58 +192,53 @@ pub fn qr_to_image_and_save(
     img.save(&Path::new(&file_path))
 }
 
-/// Converts a QR Code into an image with an embedded logo, optional frame styles, coloring, and scaling,
-/// then saves it as a PNG file.
+/// Saves a styled QR code with an embedded logo as a PNG image.
 ///
-/// # Arguments
+/// Supports custom colors, outer frames, and square or rounded frames behind the logo.
 ///
-/// * `qr` - The QR Code object to convert.
-/// * `logo_path` - **Required.** Path to the logo image file to embed at the center of the QR Code.
-/// * `upscale_factor` - Optional. Scaling factor for enlarging the QR code (default is 4).
-/// * `directory_path` - Optional. Output directory to save the image (default is "generated").
-/// * `file_name` - Optional. Filename (without extension). If not provided, a timestamp is used.
-/// * `qr_color` - Optional. RGB color of the dark modules (default is black `[0, 0, 0]`).
-/// * `outer_frame_px` - Optional. Size of white outer padding in pixels (default is none).
-/// * `frame_style` - Optional. `"rounded"` or `"square"` background frame behind the logo.
+/// # Parameters
+///
+/// - `qr`: The QR code to render.
+/// - `logo_path`: Path to the logo image.
+/// - `upscale_factor`: Optional scaling factor (defaults to 4).
+/// - `directory_path`: Optional directory path (defaults to "generated").
+/// - `file_name`: Optional filename (defaults to a timestamp).
+/// - `qr_color`: Optional RGB color for dark modules (defaults to black).
+/// - `outer_frame_px`: Optional white frame size in pixels.
+/// - `frame_style`: Optional frame style ("square" or "rounded").
 ///
 /// # Returns
 ///
-/// * `Result<(), image::ImageError>` on success or failure during image generation/saving.
+/// A `Result` indicating success or an [`image::ImageError`] on failure.
 ///
 /// # Example
 ///
 /// ```rust
-/// use qirust::qrcode::{ QrCode, QrCodeEcc, Version };
+/// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
 /// use qirust::helper::frameqr_to_image_and_save;
 ///
-/// let content = "your content here";
-/// let logo_path = "src/logo.png";
-/// let errcorlvl = QrCodeEcc::High;
 /// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
 /// let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
-///
-/// // Colored + outer frame
-/// let mut out1 = outbuffer;
-/// let mut temp1 = tempbuffer;
 /// let qr = QrCode::encode_text(
-///     content,
-///     &mut temp1,
-///     &mut out1,
-///     errcorlvl,
-///     Version::new(10),
-///     Version::new(30),
+///     "https://example.com",
+///     &mut tempbuffer,
+///     &mut outbuffer,
+///     QrCodeEcc::High,
+///     Version::MIN,
+///     Version::MAX,
 ///     None,
-///     true
+///     true,
 /// ).unwrap();
+///
 /// frameqr_to_image_and_save(
 ///     qr,
-///     logo_path,
-///     Some(4),
-///     None,
-///     None,
+///     "src/logo.png",
+///     Some(6),
+///     Some("output"),
+///     Some("styled_qr"),
 ///     Some([255, 165, 0]),
 ///     Some(40),
-///     None
+///     Some("rounded"),
 /// ).unwrap();
 /// ```
 pub fn frameqr_to_image_and_save(
@@ -325,51 +370,38 @@ pub fn frameqr_to_image_and_save(
     }
 }
 
-/// Generates a styled QR Code image with an embedded logo and saves it to a PNG file.
+/// Generates and saves a styled QR code from text content.
 ///
-/// This function wraps [`frameqr_to_image_and_save`] for convenience, allowing quick generation of
-/// logo-enhanced QR codes with optional styling (color, quiet zone, rounded/square frame).
+/// A convenience wrapper around [`frameqr_to_image_and_save`].
 ///
-/// # Arguments
+/// # Parameters
 ///
-/// * `content` - The string content to encode into the QR Code.
-/// * `logo_path` - **Required.** File path to the logo image that will be placed in the center of the QR.
-/// * `ecc` - Optional. Error correction level (`QrCodeEcc::Low`, `Medium`, `Quartile`, or `High`). Defaults to `High`.
-/// * `upscale_factor` - Optional. Pixel scale multiplier for output image size (default is 4).
-/// * `directory_path` - Optional. Directory to save the PNG file (default is "generated").
-/// * `file_name` - Optional. Name of the PNG file (without extension). If not provided, uses a timestamp.
-/// * `qr_color` - Optional. RGB color array (e.g., `[255, 0, 0]` for red). Defaults to black.
-/// * `outer_frame_px` - Optional. Quiet zone padding around the QR code in pixels.
-/// * `frame_style` - Optional. `"rounded"` or `"square"` style background frame behind the logo.
+/// - `content`: The text to encode.
+/// - `logo_path`: Path to the logo image.
+/// - `ecc`: Optional error correction level (defaults to `High`).
+/// - `upscale_factor`: Optional scaling factor (defaults to 4).
+/// - `directory_path`: Optional directory path (defaults to "generated").
+/// - `file_name`: Optional filename (defaults to a timestamp).
+/// - `qr_color`: Optional RGB color for dark modules (defaults to black).
+/// - `outer_frame_px`: Optional white frame size in pixels.
+/// - `frame_style`: Optional frame style ("square" or "rounded").
 ///
 /// # Example
 ///
 /// ```rust
-/// use qirust::{ helper::generate_frameqr, qrcode::QrCodeEcc };
+/// use qirust::{helper::generate_frameqr, qrcode::QrCodeEcc};
 ///
-/// fn main() {
-///     let content = "your content here";
-///     let logo_path = "src/logo.png";
-///
-///     let errcorlvl: QrCodeEcc = QrCodeEcc::High;
-///
-///     let qr_color = [255, 165, 0]; // orange
-///
-///     let outer_frame_px = 40; // ~25% quiet zone
-///     let frame_style = Some("rounded");
-///
-///     generate_frameqr(
-///         content,
-///         logo_path,
-///         Some(errcorlvl),
-///         Some(6),
-///         None,
-///         None,
-///         Some(qr_color),
-///         Some(outer_frame_px),
-///         frame_style
-///     );
-/// }
+/// generate_frameqr(
+///     "https://example.com",
+///     "src/logo.png",
+///     Some(QrCodeEcc::High),
+///     Some(6),
+///     Some("output"),
+///     Some("styled_qr"),
+///     Some([255, 165, 0]),
+///     Some(40),
+///     Some("rounded"),
+/// );
 /// ```
 pub fn generate_frameqr(
     content: &str,
@@ -408,20 +440,20 @@ pub fn generate_frameqr(
     ).unwrap()
 }
 
-/// Generates a QR Code image from the provided content and saves it to a file.
+/// Generates and saves a basic QR code image from text content.
 ///
-/// # Arguments
+/// # Parameters
 ///
-/// * `content` - The content to encode into the QR Code.
-/// * `directory` - Optional. The directory path where the image will be saved. If not provided, the default directory is "generated".
-/// * `filename` - Optional. The name of the image file. If not provided, a timestamp-based filename will be used.
+/// - `content`: The text to encode.
+/// - `directory`: Optional directory path (defaults to "generated").
+/// - `filename`: Optional filename (defaults to a timestamp).
 ///
 /// # Example
 ///
-/// ```
+/// ```rust
 /// use qirust::helper::generate_image;
 ///
-/// generate_image("Hello, World!", Some("images"), Some("qr_code"));
+/// generate_image("Hello, World!", Some("output"), Some("qr_code"));
 /// ```
 pub fn generate_image(content: &str, directory: Option<&str>, filename: Option<&str>) {
     let text: &str = content; // User-supplied Unicode text
@@ -445,23 +477,23 @@ pub fn generate_image(content: &str, directory: Option<&str>, filename: Option<&
     qr_to_image_and_save(&qr, directory, filename).unwrap();
 }
 
-/// Generates a QR Code SVG from the provided content.
+/// Generates an SVG string for a QR code from text content.
 ///
-/// # Arguments
+/// # Parameters
 ///
-/// * `content` - The content to encode into the QR Code.
+/// - `content`: The text to encode.
 ///
 /// # Returns
 ///
-/// A string of SVG code representing the QR Code image.
+/// A string containing the SVG code.
 ///
 /// # Example
 ///
-/// ```
+/// ```rust
 /// use qirust::helper::generate_svg_string;
 ///
-/// let svg_string = generate_svg_string("Hello, World!");
-/// println!("{}", svg_string);
+/// let svg = generate_svg_string("Hello, World!");
+/// println!("{}", svg);
 /// ```
 pub fn generate_svg_string(content: &str) -> String {
     let text: &str = content; // User-supplied Unicode text
@@ -485,55 +517,50 @@ pub fn generate_svg_string(content: &str) -> String {
     to_svg_string(&qr, 4)
 }
 
-/// Mixes the foreground and background colors based on the pixel value.
+/// Mixes foreground and background colors based on a pixel value.
 ///
-/// # Arguments
+/// # Parameters
 ///
-/// * `pixel` - The pixel value.
-/// * `foreground` - The foreground color value.
-/// * `background` - The background color value.
+/// - `pixel`: The pixel value (0–255).
+/// - `foreground`: The foreground color value.
+/// - `background`: The background color value.
 ///
 /// # Returns
 ///
-/// The mixed color value.
+/// The mixed color value (0–255).
 ///
 /// # Example
 ///
 /// ```rust
 /// use qirust::helper::mix_colors;
-/// use image::Rgb;
 ///
-/// let pixel = 128;
-/// let foreground = Rgb([255, 0, 0]); // Red
-/// let background = Rgb([0, 0, 255]); // Blue
-///
-/// let mixed_color = mix_colors(pixel, foreground[0], background[0]);
-/// println!("{}", mixed_color);
+/// let mixed = mix_colors(128, 255, 0); // Mixes full red with no red
+/// println!("{}", mixed);
 /// ```
 pub fn mix_colors(pixel: u8, foreground: u8, background: u8) -> u8 {
     (((pixel as u16) * (foreground as u16)) / 255 +
         ((255 - (pixel as u16)) * (background as u16)) / 255) as u8
 }
 
-/// Generates a QR Code image buffer from the provided content.
+/// Generates an in-memory image buffer for a QR code.
 ///
-/// # Arguments
+/// # Parameters
 ///
-/// * `content` - The content to encode into the QR Code.
-/// * `border` - Optional. The number of border modules to add around the QR Code. If not provided, the default is 4.
-/// * `fg_color` - Optional. The foreground color of the QR Code. If not provided, the default is black.
-/// * `bg_color` - Optional. The background color of the QR Code. If not provided, the default is white.
+/// - `content`: The text to encode.
+/// - `border`: Optional border size in modules (defaults to 4).
+/// - `fg_color`: Optional foreground color (defaults to black).
+/// - `bg_color`: Optional background color (defaults to white).
 ///
 /// # Returns
 ///
-/// An `ImageBuffer` representing the QR Code image.
+/// An [`ImageBuffer`] containing the QR code image.
 ///
 /// # Example
 ///
-/// ```
+/// ```rust
 /// use qirust::helper::generate_image_buffer;
 ///
-/// let img_buffer = generate_image_buffer("Hello, World!", None, None, None); // Border is 4 by default and colors are black and white by default
+/// let img = generate_image_buffer("Hello, World!", None, None, None);
 /// ```
 pub fn generate_image_buffer(
     content: &str,
