@@ -205,6 +205,7 @@ pub fn qr_to_image_and_save(
 /// - `file_name`: Optional filename (defaults to a timestamp).
 /// - `qr_color`: Optional RGB color for dark modules (defaults to black).
 /// - `outer_frame_px`: Optional white frame size in pixels.
+/// - `inner_frame_px`: Optional inner frame size in pixels.
 /// - `frame_style`: Optional frame style ("square" or "rounded").
 ///
 /// # Returns
@@ -238,6 +239,7 @@ pub fn qr_to_image_and_save(
 ///     Some("styled_qr"),
 ///     Some([255, 165, 0]),
 ///     Some(40),
+///     Some(10),
 ///     Some("rounded"),
 /// ).unwrap();
 /// ```
@@ -249,6 +251,7 @@ pub fn frameqr_to_image_and_save(
     file_name: Option<&str>,
     qr_color: Option<[u8; 3]>,
     outer_frame_px: Option<u32>,
+    inner_frame_px: Option<u32>,
     frame_style: Option<&str> // "square", "rounded"
 ) -> Result<(), image::ImageError> {
     let qr_size = qr.size() as u32;
@@ -266,7 +269,7 @@ pub fn frameqr_to_image_and_save(
         }
     }
 
-    let upscale = upscale_factor.unwrap_or(4);
+    let upscale = upscale_factor.unwrap_or(8);
     let mut upscaled_qr = resize(
         &DynamicImage::ImageRgb8(qr_img),
         qr_size * upscale,
@@ -293,7 +296,7 @@ pub fn frameqr_to_image_and_save(
     // Apply frame style if any
     match frame_style {
         Some("rounded") => {
-            let frame_margin = 3;
+            let frame_margin = inner_frame_px.unwrap_or(3);
             let center_x = x_offset + logo_resized.width() / 2;
             let center_y = y_offset + logo_resized.height() / 2;
             let radius = ((logo_resized.width() + frame_margin * 2).min(
@@ -318,7 +321,7 @@ pub fn frameqr_to_image_and_save(
             }
         }
         Some("square") => {
-            let frame_margin = 3;
+            let frame_margin = inner_frame_px.unwrap_or(3);
             for y in y_offset.saturating_sub(frame_margin)..(
                 y_offset +
                 logo_resized.height() +
@@ -384,6 +387,7 @@ pub fn frameqr_to_image_and_save(
 /// - `file_name`: Optional filename (defaults to a timestamp).
 /// - `qr_color`: Optional RGB color for dark modules (defaults to black).
 /// - `outer_frame_px`: Optional white frame size in pixels.
+/// - `inner_frame_px`: Optional inner frame size in pixels.
 /// - `frame_style`: Optional frame style ("square" or "rounded").
 ///
 /// # Example
@@ -400,6 +404,7 @@ pub fn frameqr_to_image_and_save(
 ///     Some("styled_qr"),
 ///     Some([255, 165, 0]),
 ///     Some(40),
+///     Some(10),
 ///     Some("rounded"),
 /// );
 /// ```
@@ -412,6 +417,7 @@ pub fn generate_frameqr(
     file_name: Option<&str>,
     qr_color: Option<[u8; 3]>,
     outer_frame_px: Option<u32>,
+    inner_frame_px: Option<u32>,
     frame_style: Option<&str>
 ) {
     let errcorlvl = ecc.unwrap_or(QrCodeEcc::High);
@@ -436,6 +442,7 @@ pub fn generate_frameqr(
         file_name,
         qr_color,
         outer_frame_px,
+        inner_frame_px,
         frame_style
     ).unwrap()
 }
