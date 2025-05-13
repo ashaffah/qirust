@@ -336,7 +336,7 @@ impl<'a> QrCode<'a> {
         // Do masking
         if msk.is_none() {
             // Automatically choose best mask
-            let mut minpenalty = core::i32::MAX;
+            let mut minpenalty = i32::MAX;
             for i in 0u8..8 {
                 let i = Mask::new(i);
                 result.apply_mask(&funcmods, i);
