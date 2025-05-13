@@ -153,4 +153,4 @@ Contributions are welcome! Fork the repository, create a feature branch, and sub
 
 ## License
 
-MIT License. See [LICENSE](https://github.com/your-repo/qirust/blob/main/LICENSE) for details.
+MIT License. See [LICENSE](https://github.com/ashaffah/qirust/blob/main/LICENSE) for details.
