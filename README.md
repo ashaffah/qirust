@@ -99,6 +99,7 @@ fn main() {
         Some("styled_qr"),
         Some([255, 165, 0]), // Orange
         Some(40), // Frame size
+        Some(10), // Inner frame size
         Some("rounded"), // Frame style
     ).expect("Failed to generate QR code");
 }
