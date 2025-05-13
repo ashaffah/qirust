@@ -41,6 +41,7 @@
 //!         Some("styled_qr"),
 //!         Some([255, 165, 0]), // Orange
 //!         Some(40),
+//!         Some(10),
 //!         Some("rounded"),
 //!     );
 //! }
