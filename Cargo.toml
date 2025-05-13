@@ -1,6 +1,6 @@
 [package]
 name = "qirust"
-version = "0.1.22"
+version = "0.1.22-1"
 authors = ["Ashaffah"]
 edition = "2021"
 description = "A simple QR code generator written in Rust using standard library."
