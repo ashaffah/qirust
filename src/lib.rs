@@ -4,14 +4,14 @@
 //!
 //! `qirust` enables encoding text or binary data into QR codes, adhering to the QR Code Model 2
 //! specification. It supports versions 1 to 40, four error correction levels, and various output
-//! formats (console, PNG, SVG). The library also offers styling features like logo embedding, custom
-//! colors, and frame styles.
+//! formats (console, PNG, SVG, in-memory image buffers). The library also offers styling features
+//! like logo embedding, custom colors, and frame styles.
 //!
 //! ## Features
 //!
 //! - Encode data in numeric, alphanumeric, byte, or ECI modes.
 //! - Support four error correction levels: Low, Medium, Quartile, High.
-//! - Render QR codes as ASCII art, PNG images, or SVGs.
+//! - Render QR codes as ASCII art, PNG images, SVGs, or in-memory image buffers.
 //! - Style QR codes with logos, custom colors, and square/rounded frames.
 //! - Safe Rust implementation with no unsafe code.
 //!
@@ -44,6 +44,17 @@
 //!         Some(10),
 //!         Some("rounded"),
 //!     );
+//! }
+//! ```
+//!
+//! Generate an in-memory image buffer:
+//!
+//! ```rust
+//! use qirust::helper::generate_image_buffer;
+//!
+//! fn main() {
+//!     let img = generate_image_buffer("Hello, World!", None, None, None);
+//!     img.save("output/qr.png").expect("Failed to save image");
 //! }
 //! ```
 //!

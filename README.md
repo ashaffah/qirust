@@ -8,7 +8,7 @@
 
 ## Overview
 
-`qirust` is a safe and efficient Rust library for generating QR codes, adhering to the QR Code Model 2 specification. It supports encoding text or binary data with customizable error correction levels, versions, and styling options, including logo embedding, custom colors, and frame styles. The library provides flexible output formats: console ASCII art, PNG images, and SVGs.
+`qirust` is a safe and efficient Rust library for generating QR codes, adhering to the QR Code Model 2 specification. It supports encoding text or binary data with customizable error correction levels, versions, and styling options, including logo embedding, custom colors, and frame styles. The library provides flexible output formats: console ASCII art, PNG images, SVGs, and in-memory image buffers.
 
 ## Installation
 
@@ -17,7 +17,6 @@ Add the following to your `Cargo.toml`:
 ```toml
 [dependencies]
 qirust = "0.1" # Replace with the latest version
-image = "0.24" # Required for image rendering
 ```
 
 ## Modules
@@ -70,7 +69,7 @@ fn main() -> Result<(), qirust::qrcode::DataTooLong> {
 
 ### Module: `helper`
 
-Provides utilities for rendering QR codes as console output, PNG images, or SVGs, with styling options like logo embedding and custom colors.
+Provides utilities for rendering QR codes as console output, PNG images, SVGs, or in-memory image buffers, with styling options like logo embedding, custom colors, and frame styles.
 
 #### Key Functions
 
@@ -78,11 +77,14 @@ Provides utilities for rendering QR codes as console output, PNG images, or SVGs
 - **`to_svg_string`**: Generates an SVG string for a QR code.
 - **`qr_to_image_and_save`**: Saves a QR code as a PNG image.
 - **`frameqr_to_image_and_save`**: Saves a styled QR code with a logo, custom colors, and optional frames.
+- **`frameqr_to_svg_string`**: Generates an SVG string for a styled QR code with an embedded logo.
 - **`generate_frameqr`**: Convenience function to generate a styled QR code from text.
 - **`generate_image`**: Saves a basic QR code as a PNG.
 - **`generate_svg_string`**: Generates an SVG string from text.
 - **`generate_image_buffer`**: Creates an in-memory QR code image buffer.
+- **`generate_frameqr_buffer`**: Creates an in-memory image buffer for a styled QR code with a logo.
 - **`mix_colors`**: Blends foreground and background colors for rendering.
+- **`encode_base64`**: Encodes a byte slice into a base64-encoded string for logo embedding.
 
 #### Example: Styled QR Code with Logo
 
@@ -105,14 +107,47 @@ fn main() {
 }
 ```
 
-#### Example: SVG Generation
+#### Example: SVG Generation with Logo
 
 ```rust
-use qirust::helper::generate_svg_string;
+use qirust::qrcode::{QrCode, QrCodeEcc, Version};
+use qirust::helper::frameqr_to_svg_string;
 
 fn main() {
-    let svg = generate_svg_string("Hello, World!");
+    let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
+    let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
+    let qr = QrCode::encode_text(
+        "https://example.com",
+        &mut tempbuffer,
+        &mut outbuffer,
+        QrCodeEcc::High,
+        Version::MIN,
+        Version::MAX,
+        None,
+        true,
+    ).unwrap();
+
+    let svg = frameqr_to_svg_string(
+        qr,
+        "logo.png",
+        Some(6),
+        Some([255, 165, 0]),
+        Some(40),
+        Some(10),
+        Some("rounded"),
+    );
     println!("{}", svg);
+}
+```
+
+#### Example: In-Memory Image Buffer
+
+```rust
+use qirust::helper::generate_image_buffer;
+
+fn main() {
+    let img = generate_image_buffer("Hello, World!", None, None, None);
+    img.save("output/qr.png").expect("Failed to save image");
 }
 ```
 
@@ -135,7 +170,7 @@ match QrCode::encode_text(...) {
 
 - **Encoding Modes**: Numeric, alphanumeric, byte, and ECI (Kanji mode defined but unimplemented).
 - **Error Correction**: Four levels to balance capacity and robustness.
-- **Output Formats**: Console, PNG, SVG.
+- **Output Formats**: Console, PNG, SVG, in-memory image buffers.
 - **Styling**: Logo embedding, custom colors, square/rounded frames.
 - **Safety**: No unsafe code, adhering to Rust’s safety guarantees.
 - **Testing**: Unit tests for SVG and image buffer generation.
@@ -144,7 +179,7 @@ match QrCode::encode_text(...) {
 
 - **Kanji Mode**: Defined but not fully implemented.
 - **ECI Mode**: Supported but requires careful use.
-- **Logo Size**: Automatically resized to one-third of QR code dimensions for scannability.
+- **Logo Size**: Automatically resized to one-third of QR code dimensions for scannability (increased to 40% for SVG rendering).
 - **File I/O**: Requires valid paths and permissions for image saving.
 
 ## Contributing
