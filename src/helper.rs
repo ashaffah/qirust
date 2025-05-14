@@ -2,19 +2,70 @@
 //!
 //! This module provides functions to render QR codes as console output, PNG images, or SVGs, with
 //! options for styling (e.g., logo embedding, custom colors, frames).
-use crate::qrcode::{ QrCode, QrCodeEcc, Version };
+use crate::{ qrcode::{ QrCode, QrCodeEcc, Version } };
 
 use image::{
+    buffer::ConvertBuffer,
     imageops::{ overlay, resize, FilterType },
     DynamicImage,
     ImageBuffer,
     Luma,
     Rgb,
+    Rgba,
     RgbaImage,
 };
 use std::{ env, fs, path::{ Path, PathBuf }, time::{ SystemTime, UNIX_EPOCH } };
 
 /*---- Utilities ----*/
+
+/// Encodes a byte slice into a base64-encoded string.
+///
+/// This function implements standard base64 encoding, converting each group of 3 input bytes into
+/// 4 output characters from the base64 alphabet (A-Z, a-z, 0-9, +, /). If the input length is not
+/// a multiple of 3, padding with '=' characters is added as needed.
+///
+/// # Parameters
+///
+/// - `data`: A slice of bytes to encode.
+///
+/// # Returns
+///
+/// A `String` containing the base64-encoded representation of the input data.
+///
+/// # Example
+///
+/// ```rust
+/// use qirust::helper::encode_base64;
+///
+/// let data = b"Hello";
+/// let encoded = encode_base64(data);
+/// assert_eq!(encoded, "SGVsbG8=");
+/// ```
+pub fn encode_base64(data: &[u8]) -> String {
+    const BASE64_ALPHABET: &[
+        u8;
+        64
+    ] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::new();
+
+    for chunk in data.chunks(3) {
+        let b1 = chunk[0];
+        let b2 = chunk.get(1).copied().unwrap_or(0);
+        let b3 = chunk.get(2).copied().unwrap_or(0);
+
+        let c1 = (b1 >> 2) & 0x3f;
+        let c2 = ((b1 & 0x03) << 4) | ((b2 >> 4) & 0x0f);
+        let c3 = if chunk.len() > 1 { ((b2 & 0x0f) << 2) | ((b3 >> 6) & 0x03) } else { 64 };
+        let c4 = if chunk.len() > 2 { b3 & 0x3f } else { 64 };
+
+        result.push(BASE64_ALPHABET[c1 as usize] as char);
+        result.push(BASE64_ALPHABET[c2 as usize] as char);
+        result.push(if c3 == 64 { '=' } else { BASE64_ALPHABET[c3 as usize] as char });
+        result.push(if c4 == 64 { '=' } else { BASE64_ALPHABET[c4 as usize] as char });
+    }
+
+    result
+}
 
 /// Generates an SVG string for a QR code.
 ///
@@ -77,6 +128,178 @@ pub fn to_svg_string(qr: &QrCode, border: i32) -> String {
     result += "\" fill=\"#000000\"/>\n";
     result += "</svg>\n";
     result
+}
+
+/// Generates an SVG string for a styled QR code with an embedded logo.
+///
+/// Supports custom colors, outer frames, and square or rounded frames behind the logo.
+/// The logo is embedded as a base64-encoded PNG image using a custom encoding function.
+/// Panics on errors such as failure to load the logo or encode the image.
+/// Uses CatmullRom filter for sharper logo resizing and aligns logo to integer coordinates.
+///
+/// # Parameters
+///
+/// - `qr`: The QR code to render.
+/// - `logo_path`: Path to the logo image.
+/// - `upscale_factor`: Optional scaling factor (defaults to 8).
+/// - `qr_color`: Optional RGB color for dark modules (defaults to black).
+/// - `outer_frame_px`: Optional white frame size in pixels.
+/// - `inner_frame_px`: Optional inner frame size in pixels.
+/// - `frame_style`: Optional frame style ("square" or "rounded").
+///
+/// # Returns
+///
+/// A string containing the SVG code.
+///
+/// # Example
+///
+/// ```rust
+/// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
+/// use qirust::helper::frameqr_to_svg_string;
+///
+/// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
+/// let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
+/// let qr = QrCode::encode_text(
+///     "https://example.com",
+///     &mut tempbuffer,
+///     &mut outbuffer,
+///     QrCodeEcc::High,
+///     Version::MIN,
+///     Version::MAX,
+///     None,
+///     true,
+/// ).unwrap();
+///
+/// let svg = frameqr_to_svg_string(
+///     qr,
+///     "src/logo.png",
+///     Some(6),
+///     Some([255, 165, 0]),
+///     Some(40),
+///     Some(10),
+///     Some("rounded"),
+/// );
+///
+/// println!("{}", svg);
+/// ```
+pub fn frameqr_to_svg_string(
+    qr: QrCode,
+    logo_path: &str,
+    upscale_factor: Option<u32>,
+    qr_color: Option<[u8; 3]>,
+    outer_frame_px: Option<u32>,
+    inner_frame_px: Option<u32>,
+    frame_style: Option<&str> // "square", "rounded"
+) -> String {
+    let qr_size = qr.size() as u32;
+    let upscale = upscale_factor.unwrap_or(8);
+    let pixel_size = qr_size * upscale;
+    let outer_frame = outer_frame_px.unwrap_or(0);
+    let total_size = pixel_size + 2 * outer_frame;
+
+    // Initialize SVG string
+    let mut svg = String::new();
+    svg += "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+    svg +=
+        "<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n";
+    svg += &format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" version=\"1.1\" viewBox=\"0 0 {} {}\" stroke=\"none\">\n",
+        total_size,
+        total_size
+    );
+
+    // Add white background
+    svg += &format!(
+        "\t<rect width=\"{}\" height=\"{}\" fill=\"#FFFFFF\"/>\n",
+        total_size,
+        total_size
+    );
+
+    // Convert QR color to hex
+    let qr_rgb = qr_color.unwrap_or([0, 0, 0]);
+    let qr_color_hex = format!("#{:02X}{:02X}{:02X}", qr_rgb[0], qr_rgb[1], qr_rgb[2]);
+
+    // Draw QR code modules
+    svg += "\t<path d=\"";
+    for y in 0..qr_size {
+        for x in 0..qr_size {
+            if qr.get_module(x as i32, y as i32) {
+                let px = x * upscale + outer_frame;
+                let py = y * upscale + outer_frame;
+                svg += &format!("M{},{}h{}v{}h-{}z ", px, py, upscale, upscale, upscale);
+            }
+        }
+    }
+    svg += &format!("\" fill=\"{}\"/>\n", qr_color_hex);
+
+    // Load and resize logo
+    let current_dir = env::current_dir().expect("Failed to get current directory");
+    let full_path = current_dir.join(logo_path);
+    let logo = image::open(&Path::new(&full_path)).expect("Failed to open logo image").to_rgba8();
+    let max_logo_w = ((pixel_size as f32) * 0.4) as u32; // Increased to 40%
+    let max_logo_h = ((pixel_size as f32) * 0.4) as u32;
+    let logo_resized = if logo.width() > max_logo_w || logo.height() > max_logo_h {
+        resize(&DynamicImage::ImageRgba8(logo), max_logo_w, max_logo_h, FilterType::CatmullRom) // Changed to CatmullRom
+    } else {
+        logo
+    };
+
+    // Align logo to integer coordinates
+    let x_offset = ((pixel_size - logo_resized.width()) / 2 + outer_frame) as u32;
+    let y_offset = ((pixel_size - logo_resized.height()) / 2 + outer_frame) as u32;
+
+    // Apply frame style
+    match frame_style {
+        Some("rounded") => {
+            let frame_margin = inner_frame_px.unwrap_or(3);
+            let center_x = (x_offset + logo_resized.width() / 2) as f64;
+            let center_y = (y_offset + logo_resized.height() / 2) as f64;
+            let radius = ((logo_resized.width() + frame_margin * 2).min(
+                logo_resized.height() + frame_margin * 2
+            ) / 2) as f64;
+            svg += &format!(
+                "\t<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"#FFFFFF\"/>\n",
+                center_x,
+                center_y,
+                radius
+            );
+        }
+        Some("square") => {
+            let frame_margin = inner_frame_px.unwrap_or(3);
+            let frame_x = x_offset.saturating_sub(frame_margin);
+            let frame_y = y_offset.saturating_sub(frame_margin);
+            let frame_width = logo_resized.width() + frame_margin * 2;
+            let frame_height = logo_resized.height() + frame_margin * 2;
+            svg += &format!(
+                "\t<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"#FFFFFF\"/>\n",
+                frame_x,
+                frame_y,
+                frame_width,
+                frame_height
+            );
+        }
+        _ => {}
+    }
+
+    // Convert logo to base64-encoded PNG
+    let mut logo_buffer = vec![];
+    DynamicImage::ImageRgba8(logo_resized.clone())
+        .write_to(&mut std::io::Cursor::new(&mut logo_buffer), image::ImageFormat::Png)
+        .expect("Failed to encode logo as PNG");
+    let logo_base64 = encode_base64(&logo_buffer);
+
+    // Embed logo as image
+    svg += &format!(
+        "\t<image x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" xlink:href=\"data:image/png;base64,{}\"/>\n",
+        x_offset,
+        y_offset,
+        logo_resized.width(),
+        logo_resized.height(),
+        logo_base64
+    );
+
+    svg += "</svg>\n";
+    svg
 }
 
 /// Prints a QR code to the console using ASCII characters.
@@ -616,6 +839,165 @@ pub fn generate_image_buffer(
     });
 
     colored_image_buffer
+}
+
+/// Generates an in-memory image buffer for a styled QR code with an embedded logo.
+///
+/// Supports custom colors, outer frames, and square or rounded frames behind the logo.
+///
+/// # Parameters
+///
+/// - `qr`: The QR code to render.
+/// - `logo_path`: Path to the logo image.
+/// - `upscale_factor`: Optional scaling factor (defaults to 8).
+/// - `qr_color`: Optional RGB color for dark modules (defaults to black).
+/// - `outer_frame_px`: Optional white frame size in pixels.
+/// - `inner_frame_px`: Optional inner frame size in pixels.
+/// - `frame_style`: Optional frame style ("square" or "rounded").
+///
+/// # Returns
+///
+/// An [`ImageBuffer`] containing the styled QR code image with the logo.
+///
+/// # Example
+///
+/// ```rust
+/// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
+/// use qirust::helper::generate_frameqr_buffer;
+///
+/// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
+/// let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
+/// let qr = QrCode::encode_text(
+///     "https://example.com",
+///     &mut tempbuffer,
+///     &mut outbuffer,
+///     QrCodeEcc::High,
+///     Version::MIN,
+///     Version::MAX,
+///     None,
+///     true,
+/// ).unwrap();
+///
+/// let buffer = generate_frameqr_buffer(
+///     qr,
+///     "src/logo.png",
+///     Some(6),
+///     Some([255, 165, 0]),
+///     Some(40),
+///     Some(10),
+///     Some("rounded"),
+/// );
+///
+/// buffer.save("output/styled_qr.png").expect("Failed to save image");
+/// ```
+pub fn generate_frameqr_buffer(
+    qr: QrCode,
+    logo_path: &str,
+    upscale_factor: Option<u32>,
+    qr_color: Option<[u8; 3]>,
+    outer_frame_px: Option<u32>,
+    inner_frame_px: Option<u32>,
+    frame_style: Option<&str> // "square", "rounded"
+) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+    let qr_size = qr.size() as u32;
+    let mut qr_img = ImageBuffer::new(qr_size, qr_size);
+
+    // Draw QR with optional color
+    for y in 0..qr_size {
+        for x in 0..qr_size {
+            let color = if qr.get_module(x as i32, y as i32) {
+                Rgb(qr_color.unwrap_or([0, 0, 0]))
+            } else {
+                Rgb([255, 255, 255])
+            };
+            qr_img.put_pixel(x, y, color);
+        }
+    }
+
+    let upscale = upscale_factor.unwrap_or(8);
+    let mut upscaled_qr = DynamicImage::ImageRgb8(
+        resize(
+            &DynamicImage::ImageRgb8(qr_img),
+            qr_size * upscale,
+            qr_size * upscale,
+            FilterType::Nearest
+        ).convert()
+    ).to_rgba8();
+
+    let current_dir = env::current_dir().expect("Failed to get current directory");
+    let full_path = current_dir.join(logo_path);
+
+    let logo = image::open(&Path::new(&full_path)).expect("Failed to open logo").to_rgba8();
+    let max_logo_w = upscaled_qr.width() / 3;
+    let max_logo_h = upscaled_qr.height() / 3;
+    let logo_resized = if logo.width() > max_logo_w || logo.height() > max_logo_h {
+        resize(&DynamicImage::ImageRgba8(logo), max_logo_w, max_logo_h, FilterType::Lanczos3)
+    } else {
+        logo
+    };
+
+    let x_offset = (upscaled_qr.width() - logo_resized.width()) / 2;
+    let y_offset = (upscaled_qr.height() - logo_resized.height()) / 2;
+
+    // Apply frame style if any
+    match frame_style {
+        Some("rounded") => {
+            let frame_margin = inner_frame_px.unwrap_or(3);
+            let center_x = x_offset + logo_resized.width() / 2;
+            let center_y = y_offset + logo_resized.height() / 2;
+            let radius = ((logo_resized.width() + frame_margin * 2).min(
+                logo_resized.height() + frame_margin * 2
+            ) / 2) as f64;
+            for y in y_offset.saturating_sub(frame_margin)..(
+                y_offset +
+                logo_resized.height() +
+                frame_margin
+            ).min(upscaled_qr.height()) {
+                for x in x_offset.saturating_sub(frame_margin)..(
+                    x_offset +
+                    logo_resized.width() +
+                    frame_margin
+                ).min(upscaled_qr.width()) {
+                    let dx = (x as i64) - (center_x as i64);
+                    let dy = (y as i64) - (center_y as i64);
+                    if ((dx * dx + dy * dy) as f64).sqrt() <= radius {
+                        upscaled_qr.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+                    }
+                }
+            }
+        }
+        Some("square") => {
+            let frame_margin = inner_frame_px.unwrap_or(3);
+            for y in y_offset.saturating_sub(frame_margin)..(
+                y_offset +
+                logo_resized.height() +
+                frame_margin
+            ).min(upscaled_qr.height()) {
+                for x in x_offset.saturating_sub(frame_margin)..(
+                    x_offset +
+                    logo_resized.width() +
+                    frame_margin
+                ).min(upscaled_qr.width()) {
+                    upscaled_qr.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+                }
+            }
+        }
+        _ => {}
+    }
+
+    // Overlay the logo
+    image::imageops::overlay(&mut upscaled_qr, &logo_resized, x_offset as i64, y_offset as i64);
+
+    // Add outer frame if requested
+    if let Some(frame_px) = outer_frame_px {
+        let final_w = upscaled_qr.width() + frame_px * 2;
+        let final_h = upscaled_qr.height() + frame_px * 2;
+        let mut final_image = ImageBuffer::from_pixel(final_w, final_h, Rgba([255, 255, 255, 255]));
+        image::imageops::overlay(&mut final_image, &upscaled_qr, frame_px as i64, frame_px as i64);
+        final_image
+    } else {
+        upscaled_qr
+    }
 }
 
 // Tests
