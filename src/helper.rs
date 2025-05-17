@@ -5,7 +5,6 @@
 use crate::{ qrcode::{ QrCode, QrCodeEcc, Version } };
 
 use image::{
-    buffer::ConvertBuffer,
     imageops::{ overlay, resize, FilterType },
     DynamicImage,
     ImageBuffer,
@@ -906,28 +905,30 @@ pub fn generate_frameqr_buffer(
     for y in 0..qr_size {
         for x in 0..qr_size {
             let color = if qr.get_module(x as i32, y as i32) {
-                Rgb(qr_color.unwrap_or([0, 0, 0]))
+                {
+                    let rgb = qr_color.unwrap_or([0, 0, 0]);
+                    Rgba([rgb[0], rgb[1], rgb[2], 255])
+                }
             } else {
-                Rgb([255, 255, 255])
+                Rgba([255, 255, 255, 255])
             };
             qr_img.put_pixel(x, y, color);
         }
     }
 
     let upscale = upscale_factor.unwrap_or(8);
-    let mut upscaled_qr = DynamicImage::ImageRgb8(
+    let mut upscaled_qr = DynamicImage::ImageRgba8(
         resize(
-            &DynamicImage::ImageRgb8(qr_img),
+            &DynamicImage::ImageRgba8(qr_img),
             qr_size * upscale,
             qr_size * upscale,
             FilterType::Nearest
-        ).convert()
+        )
     ).to_rgba8();
 
     let current_dir = env::current_dir().expect("Failed to get current directory");
     let full_path = current_dir.join(logo_path);
-
-    let logo = image::open(&Path::new(&full_path)).expect("Failed to open logo").to_rgba8();
+    let logo = image::open(&full_path).expect("Failed to open logo").to_rgba8();
     let max_logo_w = upscaled_qr.width() / 3;
     let max_logo_h = upscaled_qr.height() / 3;
     let logo_resized = if logo.width() > max_logo_w || logo.height() > max_logo_h {
@@ -939,29 +940,41 @@ pub fn generate_frameqr_buffer(
     let x_offset = (upscaled_qr.width() - logo_resized.width()) / 2;
     let y_offset = (upscaled_qr.height() - logo_resized.height()) / 2;
 
-    // Apply frame style if any
     match frame_style {
         Some("rounded") => {
             let frame_margin = inner_frame_px.unwrap_or(3);
+            let frame_radius = ((logo_resized.width().min(logo_resized.height()) +
+                frame_margin * 2) /
+                2) as u32;
             let center_x = x_offset + logo_resized.width() / 2;
             let center_y = y_offset + logo_resized.height() / 2;
-            let radius = ((logo_resized.width() + frame_margin * 2).min(
-                logo_resized.height() + frame_margin * 2
-            ) / 2) as f64;
-            for y in y_offset.saturating_sub(frame_margin)..(
-                y_offset +
-                logo_resized.height() +
-                frame_margin
-            ).min(upscaled_qr.height()) {
-                for x in x_offset.saturating_sub(frame_margin)..(
-                    x_offset +
-                    logo_resized.width() +
-                    frame_margin
-                ).min(upscaled_qr.width()) {
-                    let dx = (x as i64) - (center_x as i64);
-                    let dy = (y as i64) - (center_y as i64);
-                    if ((dx * dx + dy * dy) as f64).sqrt() <= radius {
-                        upscaled_qr.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+
+            // Create precomputed mask centered on the logo
+            let mask_size = logo_resized.width().max(logo_resized.height()) + frame_margin * 2;
+            let mut mask = ImageBuffer::from_pixel(mask_size, mask_size, Rgba([0, 0, 0, 0]));
+            for y in 0..mask_size {
+                for x in 0..mask_size {
+                    let dx = (x as i32) - ((mask_size / 2) as i32);
+                    let dy = (y as i32) - ((mask_size / 2) as i32);
+                    let distance_squared = dx * dx + dy * dy;
+                    let radius_squared = (frame_radius * frame_radius) as i32;
+                    if distance_squared <= radius_squared {
+                        mask.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+                    }
+                }
+            }
+
+            // Apply mask centered on the logo
+            let mask_x = center_x - ((mask_size / 2) as u32);
+            let mask_y = center_y - ((mask_size / 2) as u32);
+            for y in 0..mask.height() {
+                for x in 0..mask.width() {
+                    if mask.get_pixel(x, y)[3] != 0 {
+                        let target_x = mask_x + x;
+                        let target_y = mask_y + y;
+                        if target_x < upscaled_qr.width() && target_y < upscaled_qr.height() {
+                            upscaled_qr.put_pixel(target_x, target_y, Rgba([255, 255, 255, 255]));
+                        }
                     }
                 }
             }
@@ -985,10 +998,8 @@ pub fn generate_frameqr_buffer(
         _ => {}
     }
 
-    // Overlay the logo
     image::imageops::overlay(&mut upscaled_qr, &logo_resized, x_offset as i64, y_offset as i64);
 
-    // Add outer frame if requested
     if let Some(frame_px) = outer_frame_px {
         let final_w = upscaled_qr.width() + frame_px * 2;
         let final_h = upscaled_qr.height() + frame_px * 2;
