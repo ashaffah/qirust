@@ -22,6 +22,7 @@
 //! ```toml
 //! [dependencies]
 //! qirust = "0.1" # Replace with the latest version
+//! image = "0.25" # For image processing
 //! ```
 //!
 //! ## Example
