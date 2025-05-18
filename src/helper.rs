@@ -790,7 +790,7 @@ pub fn mix_colors(pixel: u8, foreground: u8, background: u8) -> u8 {
 /// ```rust
 /// use qirust::helper::generate_image_buffer;
 ///
-/// let img = generate_image_buffer("Hello, World!", None, None, None);
+/// let img = generate_image_buffer("Hello, World!", None, None, None, None);
 /// ```
 pub fn generate_image_buffer(
     content: &str,
