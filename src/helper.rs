@@ -779,6 +779,7 @@ pub fn mix_colors(pixel: u8, foreground: u8, background: u8) -> u8 {
 /// - `border`: Optional border size in modules (defaults to 4).
 /// - `fg_color`: Optional foreground color (defaults to black).
 /// - `bg_color`: Optional background color (defaults to white).
+/// - `scale`: Optional scaling factor for pixel size per QR module (defaults to 4).
 ///
 /// # Returns
 ///
@@ -795,12 +796,13 @@ pub fn generate_image_buffer(
     content: &str,
     border: Option<i32>,
     fg_color: Option<Rgb<u8>>,
-    bg_color: Option<Rgb<u8>>
+    bg_color: Option<Rgb<u8>>,
+    scale: Option<u32>
 ) -> ImageBuffer<Rgb<u8>, Vec<u8>> {
     let border = border.unwrap_or(4);
     let foreground_color = fg_color.unwrap_or(Rgb([0, 0, 0]));
     let background_color = bg_color.unwrap_or(Rgb([255, 255, 255]));
-    let errcorlvl = QrCodeEcc::Low;
+    let errcorlvl = QrCodeEcc::High;
 
     let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
     let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
@@ -818,45 +820,47 @@ pub fn generate_image_buffer(
 
     std::mem::drop(tempbuffer);
 
-    let size = (qr.size() + 2 * border) as u32;
-    let mut img = ImageBuffer::new(size, size);
+    let qr_size = qr.size() as u32;
+    let scale = scale.unwrap_or(4);
+    let img_size = (qr_size + 2 * (border as u32)) * scale;
+    let mut img = ImageBuffer::from_pixel(img_size, img_size, background_color);
 
-    for (x, y, pixel) in img.enumerate_pixels_mut() {
-        let qr_x = (x as i32) - border;
-        let qr_y = (y as i32) - border;
-        *pixel = if qr.get_module(qr_x, qr_y) { foreground_color } else { background_color };
+    for y in 0..qr_size {
+        for x in 0..qr_size {
+            if qr.get_module(x as i32, y as i32) {
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        let px = (x + (border as u32)) * scale + dx;
+                        let py = (y + (border as u32)) * scale + dy;
+                        img.put_pixel(px, py, foreground_color);
+                    }
+                }
+            }
+        }
     }
 
-    // Apply color mixing here
-    let colored_image_buffer = ImageBuffer::from_fn(img.width(), img.height(), |x, y| {
-        let pixel = img.get_pixel(x, y);
-        Rgb([
-            mix_colors(pixel[0], foreground_color[0], background_color[0]),
-            mix_colors(pixel[0], foreground_color[1], background_color[1]),
-            mix_colors(pixel[0], foreground_color[2], background_color[2]),
-        ])
-    });
-
-    colored_image_buffer
+    img
 }
 
 /// Generates an in-memory image buffer for a styled QR code with an embedded logo.
 ///
-/// Supports custom colors, outer frames, and square or rounded frames behind the logo.
+/// This function creates a QR code image with customizable module color,
+/// a white border (padding), and an optional square or rounded frame behind
+/// a centered logo image.
 ///
 /// # Parameters
 ///
-/// - `qr`: The QR code to render.
-/// - `logo_path`: Path to the logo image.
-/// - `upscale_factor`: Optional scaling factor (defaults to 8).
-/// - `qr_color`: Optional RGB color for dark modules (defaults to black).
-/// - `outer_frame_px`: Optional white frame size in pixels.
-/// - `inner_frame_px`: Optional inner frame size in pixels.
-/// - `frame_style`: Optional frame style ("square" or "rounded").
+/// - `qr`: The `QrCode` object to render.
+/// - `logo_path`: Path to the image file to embed as a logo in the center.
+/// - `upscale_factor`: Optional scaling factor for pixel size per QR module (defaults to `8`).
+/// - `qr_color`: Optional RGB color `[u8; 3]` for dark modules (defaults to black).
+/// - `border_modules`: Optional white border size around the QR code, in number of modules (defaults to `1`).
+/// - `inner_frame_px`: Optional size (in pixels) of a white frame behind the logo.
+/// - `frame_style`: Optional frame style behind the logo: `"square"` or `"rounded"`.
 ///
 /// # Returns
 ///
-/// An [`ImageBuffer`] containing the styled QR code image with the logo.
+/// A `ImageBuffer<Rgba<u8>, Vec<u8>>` containing the styled QR code image with logo.
 ///
 /// # Example
 ///
@@ -866,6 +870,7 @@ pub fn generate_image_buffer(
 ///
 /// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
 /// let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
+///
 /// let qr = QrCode::encode_text(
 ///     "https://example.com",
 ///     &mut tempbuffer,
@@ -877,57 +882,58 @@ pub fn generate_image_buffer(
 ///     true,
 /// ).unwrap();
 ///
-/// let buffer = generate_frameqr_buffer(
+/// let image = generate_frameqr_buffer(
 ///     qr,
 ///     "src/logo.png",
-///     Some(6),
-///     Some([255, 165, 0]),
-///     Some(40),
-///     Some(10),
-///     Some("rounded"),
+///     Some(10),             // upscale factor
+///     Some([0, 0, 0]),      // QR color (black)
+///     Some(4),              // border in modules
+///     Some(10),             // frame margin in pixels
+///     Some("rounded")       // frame style
 /// );
 ///
-/// buffer.save("output/styled_qr.png").expect("Failed to save image");
+/// image.save("output/qr_styled.png").unwrap();
 /// ```
+
 pub fn generate_frameqr_buffer(
     qr: QrCode,
     logo_path: &str,
     upscale_factor: Option<u32>,
     qr_color: Option<[u8; 3]>,
-    outer_frame_px: Option<u32>,
+    border_modules: Option<u32>,
     inner_frame_px: Option<u32>,
     frame_style: Option<&str> // "square", "rounded"
 ) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+    let scale = upscale_factor.unwrap_or(8);
+    let border = border_modules.unwrap_or(1);
     let qr_size = qr.size() as u32;
-    let mut qr_img = ImageBuffer::new(qr_size, qr_size);
+    let padded_size = qr_size + 2 * border;
 
-    // Draw QR with optional color
+    // Create image buff with white background
+    let mut qr_img = ImageBuffer::from_pixel(padded_size, padded_size, Rgba([255, 255, 255, 255]));
+    let dark = qr_color.unwrap_or([0, 0, 0]);
+
+    // Draw QR to center (offset with border)
     for y in 0..qr_size {
         for x in 0..qr_size {
-            let color = if qr.get_module(x as i32, y as i32) {
-                {
-                    let rgb = qr_color.unwrap_or([0, 0, 0]);
-                    Rgba([rgb[0], rgb[1], rgb[2], 255])
-                }
-            } else {
-                Rgba([255, 255, 255, 255])
-            };
-            qr_img.put_pixel(x, y, color);
+            if qr.get_module(x as i32, y as i32) {
+                qr_img.put_pixel(x + border, y + border, Rgba([dark[0], dark[1], dark[2], 255]));
+            }
         }
     }
 
-    let upscale = upscale_factor.unwrap_or(8);
+    // Upscale all
     let mut upscaled_qr = DynamicImage::ImageRgba8(
         resize(
             &DynamicImage::ImageRgba8(qr_img),
-            qr_size * upscale,
-            qr_size * upscale,
+            padded_size * scale,
+            padded_size * scale,
             FilterType::Nearest
         )
     ).to_rgba8();
 
-    let current_dir = env::current_dir().expect("Failed to get current directory");
-    let full_path = current_dir.join(logo_path);
+    // Load and resize logo
+    let full_path = std::env::current_dir().unwrap().join(logo_path);
     let logo = image::open(&full_path).expect("Failed to open logo").to_rgba8();
     let max_logo_w = upscaled_qr.width() / 3;
     let max_logo_h = upscaled_qr.height() / 3;
@@ -940,56 +946,51 @@ pub fn generate_frameqr_buffer(
     let x_offset = (upscaled_qr.width() - logo_resized.width()) / 2;
     let y_offset = (upscaled_qr.height() - logo_resized.height()) / 2;
 
+    // Frame style for logo
     match frame_style {
         Some("rounded") => {
-            let frame_margin = inner_frame_px.unwrap_or(3);
-            let frame_radius = ((logo_resized.width().min(logo_resized.height()) +
-                frame_margin * 2) /
-                2) as u32;
-            let center_x = x_offset + logo_resized.width() / 2;
-            let center_y = y_offset + logo_resized.height() / 2;
+            let margin = inner_frame_px.unwrap_or(3);
+            let radius = ((logo_resized.width().min(logo_resized.height()) + 2 * margin) /
+                2) as i32;
+            let size = (radius * 2) as u32;
+            let mut mask = ImageBuffer::from_pixel(size, size, Rgba([0, 0, 0, 0]));
 
-            // Create precomputed mask centered on the logo
-            let mask_size = logo_resized.width().max(logo_resized.height()) + frame_margin * 2;
-            let mut mask = ImageBuffer::from_pixel(mask_size, mask_size, Rgba([0, 0, 0, 0]));
-            for y in 0..mask_size {
-                for x in 0..mask_size {
-                    let dx = (x as i32) - ((mask_size / 2) as i32);
-                    let dy = (y as i32) - ((mask_size / 2) as i32);
-                    let distance_squared = dx * dx + dy * dy;
-                    let radius_squared = (frame_radius * frame_radius) as i32;
-                    if distance_squared <= radius_squared {
+            for y in 0..size {
+                for x in 0..size {
+                    let dx = (x as i32) - radius;
+                    let dy = (y as i32) - radius;
+                    if dx * dx + dy * dy <= radius * radius {
                         mask.put_pixel(x, y, Rgba([255, 255, 255, 255]));
                     }
                 }
             }
 
-            // Apply mask centered on the logo
-            let mask_x = center_x - ((mask_size / 2) as u32);
-            let mask_y = center_y - ((mask_size / 2) as u32);
-            for y in 0..mask.height() {
-                for x in 0..mask.width() {
+            let mask_x = x_offset + logo_resized.width() / 2 - (radius as u32);
+            let mask_y = y_offset + logo_resized.height() / 2 - (radius as u32);
+
+            for y in 0..size {
+                for x in 0..size {
                     if mask.get_pixel(x, y)[3] != 0 {
-                        let target_x = mask_x + x;
-                        let target_y = mask_y + y;
-                        if target_x < upscaled_qr.width() && target_y < upscaled_qr.height() {
-                            upscaled_qr.put_pixel(target_x, target_y, Rgba([255, 255, 255, 255]));
+                        let px = mask_x + x;
+                        let py = mask_y + y;
+                        if px < upscaled_qr.width() && py < upscaled_qr.height() {
+                            upscaled_qr.put_pixel(px, py, Rgba([255, 255, 255, 255]));
                         }
                     }
                 }
             }
         }
         Some("square") => {
-            let frame_margin = inner_frame_px.unwrap_or(3);
-            for y in y_offset.saturating_sub(frame_margin)..(
+            let margin = inner_frame_px.unwrap_or(3);
+            for y in y_offset.saturating_sub(margin)..(
                 y_offset +
                 logo_resized.height() +
-                frame_margin
+                margin
             ).min(upscaled_qr.height()) {
-                for x in x_offset.saturating_sub(frame_margin)..(
+                for x in x_offset.saturating_sub(margin)..(
                     x_offset +
                     logo_resized.width() +
-                    frame_margin
+                    margin
                 ).min(upscaled_qr.width()) {
                     upscaled_qr.put_pixel(x, y, Rgba([255, 255, 255, 255]));
                 }
@@ -998,17 +999,9 @@ pub fn generate_frameqr_buffer(
         _ => {}
     }
 
-    image::imageops::overlay(&mut upscaled_qr, &logo_resized, x_offset as i64, y_offset as i64);
-
-    if let Some(frame_px) = outer_frame_px {
-        let final_w = upscaled_qr.width() + frame_px * 2;
-        let final_h = upscaled_qr.height() + frame_px * 2;
-        let mut final_image = ImageBuffer::from_pixel(final_w, final_h, Rgba([255, 255, 255, 255]));
-        image::imageops::overlay(&mut final_image, &upscaled_qr, frame_px as i64, frame_px as i64);
-        final_image
-    } else {
-        upscaled_qr
-    }
+    // overlay logo
+    overlay(&mut upscaled_qr, &logo_resized, x_offset as i64, y_offset as i64);
+    upscaled_qr
 }
 
 // Tests
@@ -1039,7 +1032,7 @@ mod tests {
     #[test]
     fn test_generate_image_buffer() {
         let content = "Hello, world!";
-        let img = generate_image_buffer(content, None, None, None);
+        let img = generate_image_buffer(content, None, None, None, None);
 
         // The QR code for "Hello, world!" with a low error correction level
         // and a border of 4 should be 29x29 pixels.
