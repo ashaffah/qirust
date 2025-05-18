@@ -794,7 +794,7 @@ pub fn mix_colors(pixel: u8, foreground: u8, background: u8) -> u8 {
 /// ```
 pub fn generate_image_buffer(
     content: &str,
-    border: Option<i32>,
+    border: Option<u32>,
     fg_color: Option<Rgb<u8>>,
     bg_color: Option<Rgb<u8>>,
     scale: Option<u32>
@@ -822,7 +822,7 @@ pub fn generate_image_buffer(
 
     let qr_size = qr.size() as u32;
     let scale = scale.unwrap_or(4);
-    let img_size = (qr_size + 2 * (border as u32)) * scale;
+    let img_size = (qr_size + 2 * border) * scale;
     let mut img = ImageBuffer::from_pixel(img_size, img_size, background_color);
 
     for y in 0..qr_size {
@@ -830,8 +830,8 @@ pub fn generate_image_buffer(
             if qr.get_module(x as i32, y as i32) {
                 for dy in 0..scale {
                     for dx in 0..scale {
-                        let px = (x + (border as u32)) * scale + dx;
-                        let py = (y + (border as u32)) * scale + dy;
+                        let px = (x + border) * scale + dx;
+                        let py = (y + border) * scale + dy;
                         img.put_pixel(px, py, foreground_color);
                     }
                 }
@@ -1030,10 +1030,26 @@ mod tests {
     #[test]
     fn test_generate_image_buffer() {
         let content = "Hello, world!";
-        let img = generate_image_buffer(content, None, None, None, None);
+        let border = 4;
+        let scale = 4;
 
-        // The QR code for "Hello, world!" with a low error correction level
-        // and a border of 4 should be 29x29 pixels.
-        assert_eq!(img.dimensions(), (29, 29));
+        let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
+        let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
+
+        let qr = QrCode::encode_text(
+            content,
+            &mut tempbuffer,
+            &mut outbuffer,
+            QrCodeEcc::High,
+            Version::MIN,
+            Version::MAX,
+            None,
+            true
+        ).unwrap();
+
+        let expected_size = ((qr.size() as u32) + 2 * border) * scale;
+        let img = generate_image_buffer(content, Some(border), None, None, Some(scale));
+
+        assert_eq!(img.dimensions(), (expected_size, expected_size));
     }
 }
