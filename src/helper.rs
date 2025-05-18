@@ -842,21 +842,19 @@ pub fn generate_image_buffer(
     img
 }
 
-/// Generates an in-memory image buffer for a styled QR code with an embedded logo.
+/// Generates an in-memory image buffer for a styled QR code with logo and optional frame.
 ///
-/// This function creates a QR code image with customizable module color,
-/// a white border (padding), and an optional square or rounded frame behind
-/// a centered logo image.
+/// The QR code is rendered with a configurable color, white border (in modules),
+/// and optional square or rounded frame behind the centered logo.
 ///
 /// # Parameters
-///
-/// - `qr`: The `QrCode` object to render.
-/// - `logo_path`: Path to the image file to embed as a logo in the center.
-/// - `upscale_factor`: Optional scaling factor for pixel size per QR module (defaults to `8`).
-/// - `qr_color`: Optional RGB color `[u8; 3]` for dark modules (defaults to black).
-/// - `border_modules`: Optional white border size around the QR code, in number of modules (defaults to `1`).
-/// - `inner_frame_px`: Optional size (in pixels) of a white frame behind the logo.
-/// - `frame_style`: Optional frame style behind the logo: `"square"` or `"rounded"`.
+/// - `qr`: The QR code to render.
+/// - `logo_path`: Path to the logo image.
+/// - `upscale_factor`: Optional scale factor for output size (defaults to 8).
+/// - `qr_color`: Optional RGB color for QR modules (defaults to black).
+/// - `border_modules`: White border (padding) around QR code, in modules (defaults to 1).
+/// - `inner_frame_px`: Optional padding (in pixels) around logo frame.
+/// - `frame_style`: Optional `"square"` or `"rounded"` frame style for the logo background.
 ///
 /// # Returns
 ///
