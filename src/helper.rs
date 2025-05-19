@@ -22,9 +22,6 @@ use std::{
     time::{ SystemTime, UNIX_EPOCH },
 };
 
-/// Mutex to cache the base64-encoded logo
-static LOGO_BASE64_CACHE: Mutex<Option<(String, String)>> = Mutex::new(None);
-
 /// Encodes a byte slice into a base64-encoded string.
 ///
 /// This function implements standard base64 encoding, converting each group of 3 input bytes into
@@ -106,11 +103,12 @@ pub fn encode_base64(data: &[u8]) -> String {
 /// println!("{}", svg);
 /// ```
 pub fn to_svg_string(qr: &QrCode, border: i32) -> String {
-    let mut result = String::with_capacity(1024);
-    write!(result, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n").unwrap();
-    write!(
+    let qr_size = qr.size() as usize;
+    let capacity = 200 + qr_size * qr_size * 20 + 100;
+    let mut result = String::with_capacity(capacity);
+    writeln!(
         result,
-        "<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n"
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n"
     ).unwrap();
     let dimension = qr.size().checked_add(border.checked_mul(2).unwrap()).unwrap();
     write!(
@@ -119,20 +117,25 @@ pub fn to_svg_string(qr: &QrCode, border: i32) -> String {
         dimension
     ).unwrap();
     write!(result, "\t<rect width=\"100%\" height=\"100%\" fill=\"#FFFFFF\"/>\n").unwrap();
-    write!(result, "\t<path d=\"").unwrap();
+    let mut path = String::new();
     for y in 0..qr.size() {
         for x in 0..qr.size() {
             if qr.get_module(x, y) {
-                if x != 0 || y != 0 {
-                    write!(result, " ").unwrap();
-                }
-                write!(result, "M{},{}h1v1h-1z", x + border, y + border).unwrap();
+                write!(path, " M{},{}h1v1h-1z", x + border, y + border).unwrap();
             }
         }
     }
+    write!(result, "\t<path d=\"{}\" fill=\"#000000\"/>\n", path.trim_start()).unwrap();
     write!(result, "\" fill=\"#000000\"/>\n").unwrap();
     write!(result, "</svg>\n").unwrap();
     result
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FrameStyle {
+    Square,
+    Rounded,
+    None,
 }
 
 /// Generates an SVG string for a styled QR code with an embedded logo.
@@ -150,7 +153,7 @@ pub fn to_svg_string(qr: &QrCode, border: i32) -> String {
 /// * `qr_color` - Optional RGB color for dark modules (defaults to black).
 /// * `outer_frame_px` - Optional white frame size in pixels.
 /// * `inner_frame_px` - Optional inner frame size in pixels.
-/// * `frame_style` - Optional frame style ("square" or "rounded").
+/// * `frame_style` - Optional frame style FrameStyle (defaults to `None`).
 ///
 /// # Returns
 ///
@@ -160,7 +163,7 @@ pub fn to_svg_string(qr: &QrCode, border: i32) -> String {
 ///
 /// ```rust
 /// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
-/// use qirust::helper::frameqr_to_svg_string;
+/// use qirust::helper::{frameqr_to_svg_string, FrameStyle::Rounded};
 ///
 /// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
 /// let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
@@ -182,7 +185,7 @@ pub fn to_svg_string(qr: &QrCode, border: i32) -> String {
 ///     Some([255, 165, 0]),
 ///     Some(40),
 ///     Some(10),
-///     Some("rounded"),
+///     Some(Rounded),
 /// ) {
 ///     Ok(svg) => println!("{}", svg),
 ///     Err(e) => eprintln!("Error generating SVG: {}", e),
@@ -195,8 +198,9 @@ pub fn frameqr_to_svg_string(
     qr_color: Option<[u8; 3]>,
     outer_frame_px: Option<u32>,
     inner_frame_px: Option<u32>,
-    frame_style: Option<&str>
+    frame_style: Option<FrameStyle>
 ) -> Result<String, image::ImageError> {
+    static LOGO_BASE64_CACHE: Mutex<Option<(String, String)>> = Mutex::new(None);
     let qr_size = qr.size() as u32;
     let upscale = upscale_factor.unwrap_or(8);
     let outer_frame = outer_frame_px.unwrap_or(0);
@@ -278,8 +282,8 @@ pub fn frameqr_to_svg_string(
     let logo_center_y = (qr_size * upscale) / 2 + outer_frame;
     let base_logo_radius = max_logo_w.min(max_logo_h) / 2;
     let logo_radius = base_logo_radius + inner_frame;
-    match frame_style {
-        Some("rounded") => {
+    match frame_style.unwrap_or(FrameStyle::None) {
+        FrameStyle::Rounded => {
             write!(
                 result,
                 "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"#FFFFFF\"/>\n",
@@ -288,7 +292,7 @@ pub fn frameqr_to_svg_string(
                 logo_radius
             ).unwrap();
         }
-        Some("square") => {
+        FrameStyle::Square => {
             write!(
                 result,
                 "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"#FFFFFF\" stroke=\"#FFFFFF\" stroke-width=\"{}\"/>\n",
@@ -299,7 +303,7 @@ pub fn frameqr_to_svg_string(
                 inner_frame * 2
             ).unwrap();
         }
-        _ => {}
+        FrameStyle::None => {}
     }
     write!(
         result,
@@ -410,7 +414,7 @@ pub fn qr_to_image_and_save(
         };
     }
 
-    let directory_path = directory_path.unwrap_or("generated");
+    let directory_path = PathBuf::from(directory_path.unwrap_or("generated"));
     let filename = match filename {
         Some(name) => name.to_string(),
         None => {
@@ -420,10 +424,10 @@ pub fn qr_to_image_and_save(
         }
     };
 
-    let file_path = format!("{}/{}.png", directory_path, filename);
+    let file_path = directory_path.join(format!("{}.png", filename));
 
     // Check if the directory exists, create it if it doesn't
-    if !Path::new(directory_path).exists() {
+    if !Path::new(&directory_path).exists() {
         fs::create_dir_all(directory_path)?;
     }
 
@@ -444,7 +448,7 @@ pub fn qr_to_image_and_save(
 /// * `qr_color` - Optional RGB color for dark modules (defaults to black).
 /// * `outer_frame_px` - Optional white frame size in pixels.
 /// * `inner_frame_px` - Optional inner frame size in pixels.
-/// * `frame_style` - Optional frame style ("square" or "rounded").
+/// * `frame_style` - Optional frame style FrameStyle (defaults to `None`).
 ///
 /// # Returns
 ///
@@ -454,7 +458,7 @@ pub fn qr_to_image_and_save(
 ///
 /// ```rust
 /// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
-/// use qirust::helper::frameqr_to_image_and_save;
+/// use qirust::helper::{frameqr_to_image_and_save, FrameStyle::Rounded};
 ///
 /// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
 /// let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
@@ -478,7 +482,7 @@ pub fn qr_to_image_and_save(
 ///     Some([255, 165, 0]),
 ///     Some(40),
 ///     Some(10),
-///     Some("rounded"),
+///     Some(Rounded),
 /// ) {
 ///     Ok(()) => println!("Styled QR code saved successfully"),
 ///     Err(e) => eprintln!("Error saving styled QR code: {}", e),
@@ -493,7 +497,7 @@ pub fn frameqr_to_image_and_save(
     qr_color: Option<[u8; 3]>,
     outer_frame_px: Option<u32>,
     inner_frame_px: Option<u32>,
-    frame_style: Option<&str> // "square", "rounded"
+    frame_style: Option<FrameStyle> // "square", "rounded"
 ) -> Result<(), image::ImageError> {
     let qr_size = qr.size() as u32;
     let mut qr_img = ImageBuffer::new(qr_size, qr_size);
@@ -518,11 +522,18 @@ pub fn frameqr_to_image_and_save(
         FilterType::Nearest
     );
 
-    let current_dir = env::current_dir().expect("Failed to get current directory");
-    let full_path: PathBuf = current_dir.join(logo_path);
-    println!("Logo path: {:?}", full_path);
-
-    let logo = image::open(&Path::new(&full_path))?.to_rgba8();
+    let full_path = env::current_dir()?.join(logo_path);
+    if !full_path.exists() {
+        return Err(
+            image::ImageError::IoError(
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("Logo file not found: {:?}", full_path)
+                )
+            )
+        );
+    }
+    let logo = image::open(&full_path)?.to_rgba8();
     let max_logo_w = upscaled_qr.width() / 3;
     let max_logo_h = upscaled_qr.height() / 3;
     let logo_resized = if logo.width() > max_logo_w || logo.height() > max_logo_h {
@@ -535,8 +546,8 @@ pub fn frameqr_to_image_and_save(
     let y_offset = (upscaled_qr.height() - logo_resized.height()) / 2;
 
     // Apply frame style if any
-    match frame_style {
-        Some("rounded") => {
+    match frame_style.unwrap_or(FrameStyle::None) {
+        FrameStyle::Rounded => {
             let frame_margin = inner_frame_px.unwrap_or(3);
             let center_x = x_offset + logo_resized.width() / 2;
             let center_y = y_offset + logo_resized.height() / 2;
@@ -561,7 +572,7 @@ pub fn frameqr_to_image_and_save(
                 }
             }
         }
-        Some("square") => {
+        FrameStyle::Square => {
             let frame_margin = inner_frame_px.unwrap_or(3);
             for y in y_offset.saturating_sub(frame_margin)..(
                 y_offset +
@@ -577,7 +588,7 @@ pub fn frameqr_to_image_and_save(
                 }
             }
         }
-        _ => {}
+        FrameStyle::None => {}
     }
 
     overlay(&mut upscaled_qr, &logo_resized, x_offset as i64, y_offset as i64);
@@ -629,12 +640,12 @@ pub fn frameqr_to_image_and_save(
 /// * `qr_color` - Optional RGB color for dark modules (defaults to black).
 /// * `outer_frame_px` - Optional white frame size in pixels.
 /// * `inner_frame_px` - Optional inner frame size in pixels.
-/// * `frame_style` - Optional frame style ("square" or "rounded").
+/// * `frame_style` - Optional frame style FrameStyle (defaults to `None`).
 ///
 /// # Example
 ///
 /// ```rust
-/// use qirust::{helper::generate_frameqr, qrcode::QrCodeEcc};
+/// use qirust::{helper::{generate_frameqr, FrameStyle::Rounded}, qrcode::QrCodeEcc};
 ///
 /// match generate_frameqr(
 ///     "https://example.com",
@@ -646,7 +657,7 @@ pub fn frameqr_to_image_and_save(
 ///     Some([255, 165, 0]),
 ///     Some(40),
 ///     Some(10),
-///     Some("rounded"),
+///     Some(Rounded),
 /// ) {
 ///     Ok(()) => println!("Styled QR code generated successfully"),
 ///     Err(e) => eprintln!("Error generating styled QR code: {}", e),
@@ -662,7 +673,7 @@ pub fn generate_frameqr(
     qr_color: Option<[u8; 3]>,
     outer_frame_px: Option<u32>,
     inner_frame_px: Option<u32>,
-    frame_style: Option<&str>
+    frame_style: Option<FrameStyle>
 ) -> Result<(), image::ImageError> {
     let errcorlvl = ecc.unwrap_or(QrCodeEcc::High);
     let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
@@ -1160,24 +1171,11 @@ pub fn hex_to_rgba(hex: &str) -> Result<[u8; 4], &'static str> {
 #[inline]
 pub fn hex_to_rgb(hex: &str) -> Result<[u8; 3], &'static str> {
     let hex = hex.trim_start_matches('#');
-
     if hex.len() != 6 {
         return Err("Hex code must be 6 characters (RRGGBB)");
     }
-
-    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err("Hex code contains invalid characters");
-    }
-
-    match u32::from_str_radix(hex, 16) {
-        Ok(value) => {
-            let r = ((value >> 16) & 0xff) as u8;
-            let g = ((value >> 8) & 0xff) as u8;
-            let b = (value & 0xff) as u8;
-            Ok([r, g, b])
-        }
-        Err(_) => Err("Invalid hex code"),
-    }
+    let value = u32::from_str_radix(hex, 16).map_err(|_| "Hex code contains invalid characters")?;
+    Ok([((value >> 16) & 0xff) as u8, ((value >> 8) & 0xff) as u8, (value & 0xff) as u8])
 }
 
 // Tests
