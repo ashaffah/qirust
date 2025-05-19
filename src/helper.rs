@@ -483,7 +483,7 @@ pub fn frameqr_to_image_and_save(
     qr_color: Option<[u8; 3]>,
     outer_frame_px: Option<u32>,
     inner_frame_px: Option<u32>,
-    frame_style: Option<FrameStyle> // "square", "rounded"
+    frame_style: Option<FrameStyle>
 ) -> Result<(), image::ImageError> {
     let qr_size = qr.size() as u32;
     let mut qr_img = ImageBuffer::new(qr_size, qr_size);
@@ -880,7 +880,7 @@ pub fn generate_image_buffer(
 /// * `qr_color` - Optional RGB color for QR modules (defaults to black).
 /// * `border_modules` - White border (padding) around QR code, in modules (defaults to 1).
 /// * `inner_frame_px` - Optional padding (in pixels) around logo frame.
-/// * `frame_style` - Optional `"square"` or `"rounded"` frame style for the logo background.
+/// * `frame_style` - Optional frame style FrameStyle (defaults to `None`).
 ///
 /// # Returns
 ///
@@ -890,7 +890,7 @@ pub fn generate_image_buffer(
 ///
 /// ```rust
 /// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
-/// use qirust::helper::generate_frameqr_buffer;
+/// use qirust::helper::{generate_frameqr_buffer, FrameStyle::Rounded};
 ///
 /// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
 /// let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
@@ -913,7 +913,7 @@ pub fn generate_image_buffer(
 ///     Some([0, 0, 0]),      // QR color (black)
 ///     Some(4),              // border in modules
 ///     Some(10),             // frame margin in pixels
-///     Some("rounded")       // frame style
+///     Some(Rounded)         // frame style
 /// );
 ///
 /// match image.save("output/qr_styled.png") {
@@ -928,7 +928,7 @@ pub fn generate_frameqr_buffer(
     qr_color: Option<[u8; 3]>,
     border_modules: Option<u32>,
     inner_frame_px: Option<u32>,
-    frame_style: Option<&str> // "square", "rounded"
+    frame_style: Option<FrameStyle>
 ) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
     let scale = upscale_factor.unwrap_or(8);
     let border = border_modules.unwrap_or(1);
@@ -973,8 +973,8 @@ pub fn generate_frameqr_buffer(
     let y_offset = (upscaled_qr.height() - logo_resized.height()) / 2;
 
     // Frame style for logo
-    match frame_style {
-        Some("rounded") => {
+    match frame_style.unwrap_or(FrameStyle::None) {
+        FrameStyle::Rounded => {
             let margin = inner_frame_px.unwrap_or(3);
             let radius = ((logo_resized.width().min(logo_resized.height()) + 2 * margin) /
                 2) as i32;
@@ -1006,7 +1006,7 @@ pub fn generate_frameqr_buffer(
                 }
             }
         }
-        Some("square") => {
+        FrameStyle::Square => {
             let margin = inner_frame_px.unwrap_or(3);
             for y in y_offset.saturating_sub(margin)..(
                 y_offset +
