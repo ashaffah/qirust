@@ -30,7 +30,7 @@
 //! Generate a styled QR code with a logo:
 //!
 //! ```rust
-//! use qirust::{helper::generate_frameqr, qrcode::QrCodeEcc};
+//! use qirust::{helper::{generate_frameqr, FrameStyle::Rounded}, qrcode::QrCodeEcc};
 //!
 //! fn main() {
 //!     generate_frameqr(
@@ -43,7 +43,7 @@
 //!         Some([255, 165, 0]), // Orange
 //!         Some(40),
 //!         Some(10),
-//!         Some("rounded"),
+//!         Some(Rounded),
 //!     );
 //! }
 //! ```
