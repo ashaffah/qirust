@@ -54,7 +54,7 @@
 //! use qirust::helper::generate_image_buffer;
 //!
 //! fn main() {
-//!     let img = generate_image_buffer("Hello, World!", None, None, None, None);
+//!     let img = generate_image_buffer("Hello, World!", None, None, None, None).unwrap();
 //!     img.save("output/qr.png").expect("Failed to save image");
 //! }
 //! ```
