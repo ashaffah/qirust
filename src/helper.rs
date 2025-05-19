@@ -106,17 +106,12 @@ pub fn to_svg_string(qr: &QrCode, border: i32) -> String {
     let qr_size = qr.size() as usize;
     let capacity = 200 + qr_size * qr_size * 20 + 100;
     let mut result = String::with_capacity(capacity);
+    let dimension = qr.size().checked_add(border.checked_mul(2).unwrap()).unwrap();
     writeln!(
         result,
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n"
-    ).unwrap();
-    let dimension = qr.size().checked_add(border.checked_mul(2).unwrap()).unwrap();
-    write!(
-        result,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" viewBox=\"0 0 {0} {0}\" stroke=\"none\">\n",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" viewBox=\"0 0 {0} {0}\" stroke=\"none\">\n\t<rect width=\"100%\" height=\"100%\" fill=\"#FFFFFF\"/>\n",
         dimension
     ).unwrap();
-    write!(result, "\t<rect width=\"100%\" height=\"100%\" fill=\"#FFFFFF\"/>\n").unwrap();
     let mut path = String::new();
     for y in 0..qr.size() {
         for x in 0..qr.size() {
@@ -125,9 +120,7 @@ pub fn to_svg_string(qr: &QrCode, border: i32) -> String {
             }
         }
     }
-    write!(result, "\t<path d=\"{}\" fill=\"#000000\"/>\n", path.trim_start()).unwrap();
-    write!(result, "\" fill=\"#000000\"/>\n").unwrap();
-    write!(result, "</svg>\n").unwrap();
+    writeln!(result, "\t<path d=\"{}\" fill=\"#000000\"/>\n</svg>\n", path.trim_start()).unwrap();
     result
 }
 
@@ -207,18 +200,12 @@ pub fn frameqr_to_svg_string(
     let inner_frame = inner_frame_px.unwrap_or(0);
     let estimated_size = 200 + qr_size * qr_size * 16 + 500 + qr_size * upscale * 4;
     let mut result = String::with_capacity(estimated_size as usize);
-    write!(result, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n").unwrap();
-    write!(
-        result,
-        "<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n"
-    ).unwrap();
     let dimension = qr_size * upscale + 2 * outer_frame;
-    write!(
+    writeln!(
         result,
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" viewBox=\"0 0 {0} {0}\" stroke=\"none\">\n",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" viewBox=\"0 0 {0} {0}\" stroke=\"none\">\n<rect width=\"100%\" height=\"100%\" fill=\"#FFFFFF\"/>\n",
         dimension
     ).unwrap();
-    write!(result, "<rect width=\"100%\" height=\"100%\" fill=\"#FFFFFF\"/>\n").unwrap();
     let qr_color = qr_color.unwrap_or([0, 0, 0]);
     for y in 0..qr_size {
         for x in 0..qr_size {
@@ -307,14 +294,13 @@ pub fn frameqr_to_svg_string(
     }
     write!(
         result,
-        "<image x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" href=\"data:image/png;base64,{}\" preserveAspectRatio=\"xMidYMid meet\"/>\n",
+        "<image x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" href=\"data:image/png;base64,{}\" preserveAspectRatio=\"xMidYMid meet\"/>\n</svg>\n",
         logo_center_x - max_logo_w / 2,
         logo_center_y - max_logo_h / 2,
         max_logo_w,
         max_logo_h,
         logo_base64
     ).unwrap();
-    write!(result, "</svg>\n").unwrap();
     Ok(result)
 }
 
