@@ -19,7 +19,6 @@
 ///
 /// ```rust
 /// use qirust::helper::generate_image_buffer;
-/// use image::Rgb;
 ///
 /// let img = generate_image_buffer("Hello, World!", Some(4), None, None, Some(4))
 ///     .expect("Failed to generate image buffer");
@@ -1004,8 +1003,8 @@ pub fn mix_colors(pixel: u8, foreground: u8, background: u8) -> u8 {
 ///
 /// * `content` - The text to encode.
 /// * `border` - Optional border size in modules (defaults to 4).
-/// * `fg_color` - Optional foreground color as [Rgb<u8>] (defaults to black).
-/// * `bg_color` - Optional background color as [Rgb<u8>] (defaults to white).
+/// * `fg_color` - Optional foreground color as `[R, G, B]` array (defaults to black, `[0, 0, 0]`).
+/// * `bg_color` - Optional background color as `[R, G, B]` array (defaults to white, `[255, 255, 255]`).
 /// * `scale` - Optional scaling factor for pixel size per QR module (defaults to 4).
 ///
 /// # Returns
@@ -1017,13 +1016,12 @@ pub fn mix_colors(pixel: u8, foreground: u8, background: u8) -> u8 {
 ///
 /// ```rust
 /// use qirust::helper::generate_image_buffer;
-/// use image::Rgb;
 ///
 /// let img = generate_image_buffer(
 ///     "Hello, World!",
 ///     Some(4),
-///     Some(Rgb([255, 0, 0])), // Red foreground
-///     Some(Rgb([255, 255, 255])), // White background
+///     Some([255, 0, 0]), // Red foreground
+///     Some([255, 255, 255]), // White background
 ///     Some(6),
 /// ).expect("Failed to generate image buffer");
 /// img.save("output/qr.png").expect("Failed to save image");
@@ -1038,19 +1036,20 @@ pub fn mix_colors(pixel: u8, foreground: u8, background: u8) -> u8 {
 /// # Notes
 ///
 /// - Uses a high error correction level ([QrCodeEcc::High]) for robustness.
+/// - Colors are specified as `[R, G, B]` arrays with `u8` values (0–255).
 /// - The output image is in RGB format ([Rgb<u8>]) for compatibility with most image processing
 ///   pipelines.
 /// - For styled QR codes with logos, use [generate_frameqr_buffer].
 pub fn generate_image_buffer(
     content: &str,
     border: Option<u32>,
-    fg_color: Option<Rgb<u8>>,
-    bg_color: Option<Rgb<u8>>,
+    fg_color: Option<[u8; 3]>,
+    bg_color: Option<[u8; 3]>,
     scale: Option<u32>
 ) -> Result<ImageBuffer<Rgb<u8>, Vec<u8>>, DataTooLong> {
     let border = border.unwrap_or(4);
-    let foreground_color = fg_color.unwrap_or(Rgb([0, 0, 0]));
-    let background_color = bg_color.unwrap_or(Rgb([255, 255, 255]));
+    let foreground_color = fg_color.unwrap_or([0, 0, 0]);
+    let background_color = bg_color.unwrap_or([255, 255, 255]);
     let errcorlvl = QrCodeEcc::High;
     let scale = scale.unwrap_or(4);
 
@@ -1070,7 +1069,7 @@ pub fn generate_image_buffer(
 
     let qr_size = qr.size() as u32;
     let img_size = (qr_size + 2 * border) * scale;
-    let mut img = ImageBuffer::from_pixel(img_size, img_size, background_color);
+    let mut img = ImageBuffer::from_pixel(img_size, img_size, Rgb(background_color));
 
     for y in 0..qr_size {
         for x in 0..qr_size {
@@ -1079,7 +1078,7 @@ pub fn generate_image_buffer(
                 let py = (y + border) * scale;
                 for dy in 0..scale {
                     for dx in 0..scale {
-                        img.put_pixel(px + dx, py + dy, foreground_color);
+                        img.put_pixel(px + dx, py + dy, Rgb(foreground_color));
                     }
                 }
             }
