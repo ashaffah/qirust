@@ -61,14 +61,13 @@
 //!
 //! ```rust
 //! use qirust::helper::generate_image_buffer;
-//! use image::Rgb;
 //!
 //! fn main() {
 //!     let img = generate_image_buffer(
 //!         "Hello, World!",
 //!         Some(4),
-//!         Some(Rgb([255, 0, 0])), // Red foreground
-//!         Some(Rgb([255, 255, 255])), // White background
+//!         Some([255, 0, 0]), // Red foreground
+//!         Some([255, 255, 255]), // White background
 //!         Some(6),
 //!     ).expect("Failed to generate image buffer");
 //!     img.save("output/qr.png").expect("Failed to save image");
