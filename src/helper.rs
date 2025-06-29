@@ -414,7 +414,7 @@ pub fn frameqr_to_svg_string(
                 inner_frame * 2
             ).unwrap();
         }
-        FrameStyle::None => {}
+        _ => {}
     }
     write!(
         result,
@@ -723,7 +723,7 @@ pub fn frameqr_to_image_and_save(
                 }
             }
         }
-        FrameStyle::None => {}
+        _ => {}
     }
 
     overlay(&mut upscaled_qr, &logo_resized, x_offset as i64, y_offset as i64);
@@ -1256,7 +1256,7 @@ pub fn generate_frameqr_buffer(
                 y_offset.saturating_sub(margin) as i64
             );
         }
-        FrameStyle::None => {}
+        _ => {}
     }
 
     overlay(&mut upscaled_qr, &logo_resized, x_offset as i64, y_offset as i64);
