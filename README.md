@@ -25,8 +25,8 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-qirust = "0.1" # Replace with the latest version
-image = "0.25" # Required for image processing
+qirust = "0.1"
+image = "0.25"
 ```
 
 ## Getting Started
@@ -37,23 +37,23 @@ Below are examples demonstrating how to use `qirust` to generate QR codes in var
 
 Generate a QR code with an embedded logo, orange modules, and a rounded frame:
 
-```rust
-use qirust::helper::{generate_frameqr, FrameStyle};
+```rust,no_run
+use qirust::helper::{generate_frameqr, FrameQrConfig, FrameStyle};
 use qirust::qrcode::QrCodeEcc;
 
 fn main() {
-    generate_frameqr(
-        "https://example.com",
-        "logo.png",
-        Some(QrCodeEcc::High),
-        Some(6),
-        Some("output"),
-        Some("styled_qr"),
-        Some([255, 165, 0]), // Orange
-        Some(40),            // Outer frame size
-        Some(10),            // Inner frame size
-        Some(FrameStyle::Rounded),
-    ).expect("Failed to generate QR code");
+    let config = FrameQrConfig::new("logo.png").unwrap()
+        .with_ecc(QrCodeEcc::High)
+        .with_upscale(6).unwrap()
+        .with_directory("output")
+        .with_filename("styled_qr")
+        .with_color([255, 165, 0])
+        .with_outer_frame(40)
+        .with_inner_frame(10)
+        .with_frame_style(FrameStyle::Rounded);
+
+    generate_frameqr("https://example.com", config)
+        .expect("Failed to generate QR code");
 }
 ```
 
@@ -62,16 +62,17 @@ fn main() {
 Generate a QR code as an in-memory image buffer with custom colors:
 
 ```rust
-use qirust::helper::generate_image_buffer;
+use qirust::helper::{generate_image_buffer, QrConfig};
 
 fn main() {
-    let img = generate_image_buffer(
-        "Hello, World!",
-        Some(4),
-        Some([255, 0, 0]), // Red foreground
-        Some([255, 255, 255]), // White background
-        Some(6),
-    ).expect("Failed to generate image buffer");
+    let config = QrConfig::new()
+        .with_border(4).unwrap()
+        .with_fg_color([255, 0, 0])
+        .with_bg_color([255, 255, 255])
+        .with_scale(6).unwrap();
+
+    let img = generate_image_buffer("Hello, World!", config)
+        .expect("Failed to generate image buffer");
     img.save("output/qr.png").expect("Failed to save image");
 }
 ```
@@ -80,9 +81,9 @@ fn main() {
 
 Generate an SVG string for a styled QR code with a logo:
 
-```rust
-use qirust::qrcode::{QrCode, QrCodeEcc, Version};
-use qirust::helper::{frameqr_to_svg_string, FrameStyle};
+```rust,no_run
+use qirust::qrcode::{QrCode, QrCodeEcc, Version, EncodeTextOptions};
+use qirust::helper::{frameqr_to_svg_string, FrameQrSvgConfig, FrameStyle};
 
 fn main() {
     let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
@@ -91,22 +92,24 @@ fn main() {
         "https://example.com",
         &mut tempbuffer,
         &mut outbuffer,
-        QrCodeEcc::High,
-        Version::MIN,
-        Version::MAX,
-        None,
-        true,
+        EncodeTextOptions {
+            ecl: QrCodeEcc::High,
+            minversion: Version::MIN,
+            maxversion: Version::MAX,
+            mask: None,
+            boostecl: true,
+        },
     ).unwrap();
 
-    let svg = frameqr_to_svg_string(
-        qr,
-        "logo.png",
-        Some(6),
-        Some([255, 165, 0]),
-        Some(40),
-        Some(10),
-        Some(FrameStyle::Rounded),
-    ).expect("Failed to generate SVG");
+    let config = FrameQrSvgConfig::new("logo.png").unwrap()
+        .with_upscale(6).unwrap()
+        .with_color([255, 165, 0])
+        .with_outer_frame(40)
+        .with_inner_frame(10)
+        .with_frame_style(FrameStyle::Rounded);
+
+    let svg = frameqr_to_svg_string(qr, config)
+        .expect("Failed to generate SVG");
     println!("{}", svg);
 }
 ```
@@ -116,7 +119,7 @@ fn main() {
 Encode text and print the QR code to the console:
 
 ```rust
-use qirust::qrcode::{QrCode, QrCodeEcc, Version};
+use qirust::qrcode::{QrCode, QrCodeEcc, Version, EncodeTextOptions};
 use qirust::helper::print_qr;
 
 fn main() -> Result<(), qirust::qrcode::DataTooLong> {
@@ -126,11 +129,13 @@ fn main() -> Result<(), qirust::qrcode::DataTooLong> {
         "Hello, World!",
         &mut tempbuffer,
         &mut outbuffer,
-        QrCodeEcc::Low,
-        Version::MIN,
-        Version::MAX,
-        None,
-        true,
+        EncodeTextOptions {
+            ecl: QrCodeEcc::Low,
+            minversion: Version::MIN,
+            maxversion: Version::MAX,
+            mask: None,
+            boostecl: true,
+        },
     )?;
     print_qr(&qr);
     Ok(())
@@ -150,10 +155,11 @@ Handles core QR code encoding, supporting versions 1 to 40 and four error correc
 - [**`QrSegment`**]: Represents a data segment (numeric, alphanumeric, byte, or ECI).
 - [**`Version`**]: Specifies QR code version (1–40).
 - [**`Mask`**]: Defines mask patterns (0–7).
+- [**`EncodeTextOptions`**]: Configuration options for text encoding.
 
 #### Key Functions
 
-- [**`QrCode::encode_text`**]: Encodes a text string into a QR code, selecting the smallest version within the specified range.
+- [**`QrCode::encode_text`**]: Encodes a text string into a QR code with specified options.
 - [**`QrCode::encode_binary`**]: Encodes binary data into a QR code.
 - [**`QrSegment::make_numeric`**]: Creates a numeric mode segment.
 - [**`QrSegment::make_alphanumeric`**]: Creates an alphanumeric mode segment.
@@ -166,6 +172,14 @@ See the [qrcode module documentation](https://docs.rs/qirust/latest/qirust/qrcod
 ### Module: `helper`
 
 Provides utilities for rendering QR codes in various formats with styling options, including logo embedding and custom frames.
+
+#### Configuration Structs
+
+- [**`QrConfig`**]: Configuration for basic QR code rendering (border, colors, scale).
+- [**`FrameQrConfig`**]: Configuration for styled QR codes with frames and logos (for saving to disk).
+- [**`FrameQrSaveConfig`**]: Internal configuration for saving styled QR codes.
+- [**`FrameQrSvgConfig`**]: Configuration for SVG styled QR codes with logos.
+- [**`FrameStyle`**]: Enum for frame styles (None, Square, Rounded).
 
 #### Key Functions
 
@@ -192,26 +206,32 @@ See the [helper module documentation](https://docs.rs/qirust/latest/qirust/helpe
 
 The library returns errors for specific cases:
 
-- [**`qrcode::DataTooLong`**]: Indicates data exceeds the QR code’s capacity. Handle by reducing data size, increasing version, or lowering error correction.
+- [**`qrcode::DataTooLong`**]: Indicates data exceeds the QR code's capacity. Handle by reducing data size, increasing version, or lowering error correction.
+- [**`helper::HelperError`**]: Wraps various errors including image processing, I/O, and validation errors.
 - [**`image::ImageError`**]: Occurs for image processing or file I/O errors (e.g., invalid paths or permissions).
 
 Example of handling errors:
 
 ```rust
-use qirust::qrcode::{QrCode, QrCodeEcc, Version, DataTooLong};
+use qirust::qrcode::{QrCode, QrCodeEcc, Version, DataTooLong, EncodeTextOptions};
 
 fn main() {
+    let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
+    let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
+
     match QrCode::encode_text(
-        "Too long data",
-        &mut vec![0u8; Version::MAX.buffer_len()],
-        &mut vec![0u8; Version::MAX.buffer_len()],
-        QrCodeEcc::Low,
-        Version::MIN,
-        Version::MAX,
-        None,
-        true,
+        "Too long data for this version",
+        &mut tempbuffer,
+        &mut outbuffer,
+        EncodeTextOptions {
+            ecl: QrCodeEcc::Low,
+            minversion: Version::MIN,
+            maxversion: Version::new(5),
+            mask: None,
+            boostecl: true,
+        },
     ) {
-        Ok(qr) => println!("QR code generated"),
+        Ok(qr) => println!("QR code generated successfully"),
         Err(DataTooLong::SegmentTooLong) => eprintln!("Segment too long"),
         Err(DataTooLong::DataOverCapacity(datalen, capacity)) => {
             eprintln!("Data length {} exceeds capacity {}", datalen, capacity);
@@ -240,7 +260,7 @@ For high-version QR codes or frequent rendering, functions like `generate_frameq
 
 ## Contributing
 
-Contributions are welcome! Please fork the repository, create a feature branch, and submit a pull request with tests and documentation updates. Ensure your code adheres to Rust’s safety guidelines and includes appropriate tests.
+Contributions are welcome! Please fork the repository, create a feature branch, and submit a pull request with tests and documentation updates. Ensure your code adheres to Rust's safety guidelines and includes appropriate tests.
 
 ## License
 
