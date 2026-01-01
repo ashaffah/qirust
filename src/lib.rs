@@ -29,55 +29,52 @@
 //!
 //! ```toml
 //! [dependencies]
-//! qirust = "0.1" # Replace with the latest version
-//! image = "0.25" # Required for image processing
+//! qirust = "0.1"
+//! image = "0.25"
 //! ```
 //!
 //! ## Examples
 //!
 //! Generate a styled QR code with a logo and rounded frame:
 //!
-//! ```rust
-//! use qirust::helper::{generate_frameqr, FrameStyle};
+//! ```rust,no_run
+//! use qirust::helper::{generate_frameqr, FrameQrConfig, FrameStyle};
 //! use qirust::qrcode::QrCodeEcc;
 //!
-//! fn main() {
-//!     generate_frameqr(
-//!         "https://example.com",
-//!         "src/logo.png",
-//!         Some(QrCodeEcc::High),
-//!         Some(6),
-//!         Some("output"),
-//!         Some("styled_qr"),
-//!         Some([255, 165, 0]), // Orange
-//!         Some(40),            // Outer frame size
-//!         Some(10),            // Inner frame size
-//!         Some(FrameStyle::Rounded),
-//!     ).expect("Failed to generate QR code");
-//! }
+//! let config = FrameQrConfig::new("logo.png").unwrap()
+//!     .with_ecc(QrCodeEcc::High)
+//!     .with_upscale(6).unwrap()
+//!     .with_directory("output")
+//!     .with_filename("styled_qr")
+//!     .with_color([255, 165, 0])
+//!     .with_outer_frame(40)
+//!     .with_inner_frame(10)
+//!     .with_frame_style(FrameStyle::Rounded);
+//!
+//! generate_frameqr("https://example.com", config)
+//!     .expect("Failed to generate QR code");
 //! ```
 //!
 //! Generate an in-memory image buffer for a basic QR code:
 //!
 //! ```rust
-//! use qirust::helper::generate_image_buffer;
+//! use qirust::helper::{generate_image_buffer, QrConfig};
 //!
-//! fn main() {
-//!     let img = generate_image_buffer(
-//!         "Hello, World!",
-//!         Some(4),
-//!         Some([255, 0, 0]), // Red foreground
-//!         Some([255, 255, 255]), // White background
-//!         Some(6),
-//!     ).expect("Failed to generate image buffer");
-//!     img.save("output/qr.png").expect("Failed to save image");
-//! }
+//! let config = QrConfig::new()
+//!     .with_border(4).unwrap()
+//!     .with_fg_color([255, 0, 0])
+//!     .with_bg_color([255, 255, 255])
+//!     .with_scale(6).unwrap();
+//!
+//! let img = generate_image_buffer("Hello, World!", config)
+//!     .expect("Failed to generate image buffer");
+//! # img.save("target/qr_lib.png").ok();
 //! ```
 //!
 //! Encode text and print to console:
 //!
 //! ```rust
-//! use qirust::qrcode::{QrCode, QrCodeEcc, Version};
+//! use qirust::qrcode::{QrCode, QrCodeEcc, Version, EncodeTextOptions};
 //! use qirust::helper::print_qr;
 //!
 //! fn main() -> Result<(), qirust::qrcode::DataTooLong> {
@@ -87,11 +84,13 @@
 //!         "Hello, World!",
 //!         &mut tempbuffer,
 //!         &mut outbuffer,
-//!         QrCodeEcc::Low,
-//!         Version::MIN,
-//!         Version::MAX,
-//!         None,
-//!         true,
+//!         EncodeTextOptions {
+//!             ecl: QrCodeEcc::Low,
+//!             minversion: Version::MIN,
+//!             maxversion: Version::MAX,
+//!             mask: None,
+//!             boostecl: true,
+//!         },
 //!     )?;
 //!     print_qr(&qr);
 //!     Ok(())
@@ -106,8 +105,9 @@
 //!
 //! ## Error Handling
 //!
-//! - [`qrcode::DataTooLong`]: Returned when input data exceeds the QR code’s capacity. Handle by
+//! - [`qrcode::DataTooLong`]: Returned when input data exceeds the QR code's capacity. Handle by
 //!   reducing data size, increasing version, or lowering error correction.
+//! - [`helper::HelperError`]: Wraps various errors including image processing, I/O, and validation.
 //! - [`image::ImageError`]: Occurs during image processing or file I/O (e.g., invalid logo path or
 //!   permissions issues).
 //!
@@ -128,5 +128,10 @@
 //! - **Memory Efficiency**: Precomputes buffer sizes and uses minimal allocations for encoding and
 //!   rendering.
 
-pub mod qrcode;
 pub mod helper;
+pub mod qrcode;
+
+pub use helper::{
+    FrameQrConfig, FrameQrSaveConfig, FrameQrSvgConfig, FrameStyle, HelperError, QrConfig,
+};
+pub use qrcode::{DataTooLong, EncodeTextOptions, QrCode, QrCodeEcc, Version};

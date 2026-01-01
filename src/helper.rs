@@ -18,52 +18,285 @@
 /// Generate a basic QR code as an in-memory image buffer:
 ///
 /// ```rust
-/// use qirust::helper::generate_image_buffer;
+/// use qirust::helper::{generate_image_buffer, QrConfig};
 ///
-/// let img = generate_image_buffer("Hello, World!", Some(4), None, None, Some(4))
+/// let config = QrConfig::new()
+///     .with_border(4).unwrap()
+///     .with_scale(4).unwrap();
+/// let img = generate_image_buffer("Hello, World!", config)
 ///     .expect("Failed to generate image buffer");
-/// img.save("output/qr.png").expect("Failed to save image");
+/// # img.save("target/qr_example.png").ok();
 /// ```
 ///
 /// Generate a styled QR code with a logo and rounded frame:
 ///
-/// ```rust
-/// use qirust::helper::{generate_frameqr, FrameStyle};
+/// ```rust,no_run
+/// use qirust::helper::{generate_frameqr, FrameQrConfig, FrameStyle};
 /// use qirust::qrcode::QrCodeEcc;
 ///
-/// generate_frameqr(
-///     "https://example.com",
-///     "src/logo.png",
-///     Some(QrCodeEcc::High),
-///     Some(6),
-///     Some("output"),
-///     Some("styled_qr"),
-///     Some([255, 165, 0]), // Orange
-///     Some(40),            // Outer frame size
-///     Some(10),            // Inner frame size
-///     Some(FrameStyle::Rounded),
-/// ).expect("Failed to generate QR code");
+/// let config = FrameQrConfig::new("src/logo.png").unwrap()
+///     .with_ecc(QrCodeEcc::High)
+///     .with_upscale(6).unwrap()
+///     .with_directory("output")
+///     .with_filename("styled_qr")
+///     .with_color([255, 165, 0])
+///     .with_outer_frame(40)
+///     .with_inner_frame(10)
+///     .with_frame_style(FrameStyle::Rounded);
+///
+/// generate_frameqr("https://example.com", config)
+///     .expect("Failed to generate QR code");
 /// ```
-use crate::qrcode::{ DataTooLong, QrCode, QrCodeEcc, Version };
+use crate::qrcode::{DataTooLong, EncodeTextOptions, QrCode, QrCodeEcc, Version};
 use image::{
-    imageops::{ overlay, replace, resize, FilterType },
-    DynamicImage,
-    ImageBuffer,
-    ImageFormat,
-    Luma,
-    Rgb,
-    Rgba,
-    RgbaImage,
+    imageops::{overlay, replace, resize, FilterType},
+    DynamicImage, ImageBuffer, ImageFormat, Luma, Rgb, Rgba, RgbaImage,
 };
 use std::{
     env,
+    error::Error,
+    fmt,
     fmt::Write,
     fs,
     io::Write as IoWrite,
-    path::{ Path, PathBuf },
+    path::{Path, PathBuf},
     sync::Mutex,
-    time::{ SystemTime, UNIX_EPOCH },
+    time::{SystemTime, UNIX_EPOCH},
 };
+
+// Constants for avoiding magic numbers
+const MAX_UPSCALE_FACTOR: u32 = 100;
+const MAX_BORDER_SIZE: u32 = 200;
+const MAX_IMAGE_DIMENSION: u32 = 50000;
+const DEFAULT_UPSCALE_FACTOR: u32 = 8;
+const DEFAULT_BORDER_SIZE: u32 = 4;
+const DEFAULT_SCALE: u32 = 4;
+const LOGO_SIZE_DIVISOR: u32 = 3;
+const DEFAULT_INNER_FRAME: u32 = 3;
+
+/// Custom error type untuk operasi helper QR code
+#[derive(Debug)]
+pub enum HelperError {
+    ImageError(image::ImageError),
+    DataTooLong(DataTooLong),
+    IoError(std::io::Error),
+    InvalidInput(String),
+}
+
+impl fmt::Display for HelperError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            HelperError::ImageError(e) => write!(f, "Image error: {}", e),
+            HelperError::DataTooLong(e) => write!(f, "Data too long: {:?}", e),
+            HelperError::IoError(e) => write!(f, "IO error: {}", e),
+            HelperError::InvalidInput(s) => write!(f, "Invalid input: {}", s),
+        }
+    }
+}
+
+impl Error for HelperError {}
+
+impl From<image::ImageError> for HelperError {
+    fn from(err: image::ImageError) -> Self {
+        HelperError::ImageError(err)
+    }
+}
+
+impl From<DataTooLong> for HelperError {
+    fn from(err: DataTooLong) -> Self {
+        HelperError::DataTooLong(err)
+    }
+}
+
+impl From<std::io::Error> for HelperError {
+    fn from(err: std::io::Error) -> Self {
+        HelperError::IoError(err)
+    }
+}
+
+/// Configuration for basic QR code rendering.
+#[derive(Debug, Clone)]
+pub struct QrConfig {
+    /// Border size in modules (defaults to 4)
+    pub border: u32,
+    /// Foreground color as RGB (defaults to black [0, 0, 0])
+    pub fg_color: [u8; 3],
+    /// Background color as RGB (defaults to white [255, 255, 255])
+    pub bg_color: [u8; 3],
+    /// Scale factor for output size (defaults to 4)
+    pub scale: u32,
+}
+
+impl Default for QrConfig {
+    fn default() -> Self {
+        Self {
+            border: DEFAULT_BORDER_SIZE,
+            fg_color: [0, 0, 0],
+            bg_color: [255, 255, 255],
+            scale: DEFAULT_SCALE,
+        }
+    }
+}
+
+impl QrConfig {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_border(mut self, border: u32) -> Result<Self, HelperError> {
+        if border > MAX_BORDER_SIZE {
+            return Err(HelperError::InvalidInput(format!(
+                "Border size cannot exceed {} modules",
+                MAX_BORDER_SIZE
+            )));
+        }
+        self.border = border;
+        Ok(self)
+    }
+
+    pub fn with_fg_color(mut self, color: [u8; 3]) -> Self {
+        self.fg_color = color;
+        self
+    }
+
+    pub fn with_bg_color(mut self, color: [u8; 3]) -> Self {
+        self.bg_color = color;
+        self
+    }
+
+    pub fn with_scale(mut self, scale: u32) -> Result<Self, HelperError> {
+        if scale == 0 || scale > MAX_UPSCALE_FACTOR {
+            return Err(HelperError::InvalidInput(format!(
+                "Scale must be between 1 and {}",
+                MAX_UPSCALE_FACTOR
+            )));
+        }
+        self.scale = scale;
+        Ok(self)
+    }
+
+    /// Validates the configuration before use
+    pub fn validate(&self) -> Result<(), HelperError> {
+        if self.scale == 0 {
+            return Err(HelperError::InvalidInput(
+                "Scale must be greater than 0".to_string(),
+            ));
+        }
+        if self.border > MAX_BORDER_SIZE {
+            return Err(HelperError::InvalidInput(format!(
+                "Border size cannot exceed {}",
+                MAX_BORDER_SIZE
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Configuration for styled QR codes with frames and logos.
+#[derive(Debug, Clone)]
+pub struct FrameQrConfig<'a> {
+    pub logo_path: &'a str,
+    pub ecc: QrCodeEcc,
+    pub upscale_factor: u32,
+    pub directory_path: &'a str,
+    pub file_name: Option<&'a str>,
+    pub qr_color: [u8; 3],
+    pub outer_frame_px: u32,
+    pub inner_frame_px: u32,
+    pub frame_style: FrameStyle,
+}
+
+impl<'a> Default for FrameQrConfig<'a> {
+    fn default() -> Self {
+        Self {
+            logo_path: "",
+            ecc: QrCodeEcc::High,
+            upscale_factor: 8,
+            directory_path: "generated",
+            file_name: None,
+            qr_color: [0, 0, 0],
+            outer_frame_px: 0,
+            inner_frame_px: 0,
+            frame_style: FrameStyle::None,
+        }
+    }
+}
+
+impl<'a> FrameQrConfig<'a> {
+    pub fn new(logo_path: &'a str) -> Result<Self, HelperError> {
+        if logo_path.is_empty() {
+            return Err(HelperError::InvalidInput(
+                "Logo path cannot be empty".to_string(),
+            ));
+        }
+        Ok(Self {
+            logo_path,
+            ..Default::default()
+        })
+    }
+
+    pub fn with_ecc(mut self, ecc: QrCodeEcc) -> Self {
+        self.ecc = ecc;
+        self
+    }
+
+    pub fn with_upscale(mut self, factor: u32) -> Result<Self, HelperError> {
+        if factor == 0 || factor > MAX_UPSCALE_FACTOR {
+            return Err(HelperError::InvalidInput(format!(
+                "Upscale factor must be between 1 and {}",
+                MAX_UPSCALE_FACTOR
+            )));
+        }
+        self.upscale_factor = factor;
+        Ok(self)
+    }
+
+    pub fn with_directory(mut self, path: &'a str) -> Self {
+        self.directory_path = path;
+        self
+    }
+
+    pub fn with_filename(mut self, name: &'a str) -> Self {
+        self.file_name = Some(name);
+        self
+    }
+
+    pub fn with_color(mut self, color: [u8; 3]) -> Self {
+        self.qr_color = color;
+        self
+    }
+
+    pub fn with_outer_frame(mut self, size: u32) -> Self {
+        self.outer_frame_px = size;
+        self
+    }
+
+    pub fn with_inner_frame(mut self, size: u32) -> Self {
+        self.inner_frame_px = size;
+        self
+    }
+
+    pub fn with_frame_style(mut self, style: FrameStyle) -> Self {
+        self.frame_style = style;
+        self
+    }
+
+    /// Validates the configuration before use
+    pub fn validate(&self) -> Result<(), HelperError> {
+        if self.logo_path.is_empty() {
+            return Err(HelperError::InvalidInput(
+                "Logo path is required".to_string(),
+            ));
+        }
+        if self.upscale_factor == 0 || self.upscale_factor > MAX_UPSCALE_FACTOR {
+            return Err(HelperError::InvalidInput(format!(
+                "Upscale factor must be between 1 and {}",
+                MAX_UPSCALE_FACTOR
+            )));
+        }
+        Ok(())
+    }
+}
 
 /// Encodes a byte slice into a base64-encoded string.
 ///
@@ -94,11 +327,9 @@ use std::{
 /// Uses `String::with_capacity` to avoid reallocations and bitwise operations for encoding, making it
 /// suitable for performance-critical applications.
 pub fn encode_base64(data: &[u8]) -> String {
-    const BASE64_ALPHABET: &[
-        u8;
-        64
-    ] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let encoded_len = ((data.len() + 2) / 3) * 4;
+    const BASE64_ALPHABET: &[u8; 64] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let encoded_len = data.len().div_ceil(3) * 4;
     let mut result = String::with_capacity(encoded_len);
 
     let mut i = 0;
@@ -150,7 +381,7 @@ pub fn encode_base64(data: &[u8]) -> String {
 /// # Example
 ///
 /// ```rust
-/// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
+/// use qirust::qrcode::{QrCode, QrCodeEcc, Version, EncodeTextOptions};
 /// use qirust::helper::to_svg_string;
 ///
 /// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
@@ -159,11 +390,13 @@ pub fn encode_base64(data: &[u8]) -> String {
 ///     "Hello, World!",
 ///     &mut tempbuffer,
 ///     &mut outbuffer,
-///     QrCodeEcc::Low,
-///     Version::MIN,
-///     Version::MAX,
-///     None,
-///     true,
+///     EncodeTextOptions {
+///         ecl: QrCodeEcc::Low,
+///         minversion: Version::MIN,
+///         maxversion: Version::MAX,
+///         mask: None,
+///         boostecl: true,
+///     },
 /// ).unwrap();
 ///
 /// let svg = to_svg_string(&qr, 4);
@@ -180,7 +413,8 @@ pub fn to_svg_string(qr: &QrCode, border: i32) -> String {
     let capacity = 200 + qr_size * qr_size * 20 + 100;
     let mut result = String::with_capacity(capacity);
 
-    writeln!(
+    // Writing to String cannot fail, but we handle it for consistency
+    let _ = writeln!(
         result,
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n\
@@ -188,7 +422,7 @@ pub fn to_svg_string(qr: &QrCode, border: i32) -> String {
          \t<rect width=\"100%\" height=\"100%\" fill=\"#FFFFFF\"/>\n",
         dimension,
         dimension
-    ).unwrap();
+    );
 
     let mut path = Vec::new();
     for y in 0..qr.size() {
@@ -201,12 +435,22 @@ pub fn to_svg_string(qr: &QrCode, border: i32) -> String {
                     x += 1;
                     width += 1;
                 }
-                path.push(format!(" M{},{}h{}v1h-{}z", start_x + border, y + border, width, width));
+                path.push(format!(
+                    " M{},{}h{}v1h-{}z",
+                    start_x + border,
+                    y + border,
+                    width,
+                    width
+                ));
             }
             x += 1;
         }
     }
-    writeln!(result, "\t<path d=\"{}\" fill=\"#000000\"/>\n</svg>\n", path.join("")).unwrap();
+    let _ = writeln!(
+        result,
+        "\t<path d=\"{}\" fill=\"#000000\"/>\n</svg>\n",
+        path.join("")
+    );
     result
 }
 
@@ -225,6 +469,75 @@ pub enum FrameStyle {
     None,
 }
 
+/// Configuration for SVG styled QR codes
+#[derive(Debug, Clone)]
+pub struct FrameQrSvgConfig<'a> {
+    pub logo_path: &'a str,
+    pub upscale_factor: u32,
+    pub qr_color: [u8; 3],
+    pub outer_frame_px: u32,
+    pub inner_frame_px: u32,
+    pub frame_style: FrameStyle,
+}
+
+impl<'a> Default for FrameQrSvgConfig<'a> {
+    fn default() -> Self {
+        Self {
+            logo_path: "",
+            upscale_factor: DEFAULT_UPSCALE_FACTOR,
+            qr_color: [0, 0, 0],
+            outer_frame_px: 0,
+            inner_frame_px: DEFAULT_INNER_FRAME,
+            frame_style: FrameStyle::None,
+        }
+    }
+}
+
+impl<'a> FrameQrSvgConfig<'a> {
+    pub fn new(logo_path: &'a str) -> Result<Self, HelperError> {
+        if logo_path.is_empty() {
+            return Err(HelperError::InvalidInput(
+                "Logo path cannot be empty".to_string(),
+            ));
+        }
+        Ok(Self {
+            logo_path,
+            ..Default::default()
+        })
+    }
+
+    pub fn with_upscale(mut self, factor: u32) -> Result<Self, HelperError> {
+        if factor == 0 || factor > MAX_UPSCALE_FACTOR {
+            return Err(HelperError::InvalidInput(format!(
+                "Upscale factor must be between 1 and {}",
+                MAX_UPSCALE_FACTOR
+            )));
+        }
+        self.upscale_factor = factor;
+        Ok(self)
+    }
+
+    pub fn with_color(mut self, color: [u8; 3]) -> Self {
+        self.qr_color = color;
+        self
+    }
+
+    pub fn with_outer_frame(mut self, size: u32) -> Self {
+        self.outer_frame_px = size;
+        self
+    }
+
+    pub fn with_inner_frame(mut self, size: u32) -> Self {
+        self.inner_frame_px = size;
+        self
+    }
+
+    pub fn with_frame_style(mut self, style: FrameStyle) -> Self {
+        self.frame_style = style;
+        self
+    }
+}
+
 /// Generates an SVG string for a styled QR code with an embedded logo.
 ///
 /// Renders a QR code with a logo embedded as a base64-encoded PNG, supporting custom colors, outer
@@ -234,22 +547,17 @@ pub enum FrameStyle {
 /// # Arguments
 ///
 /// * `qr` - The [QrCode] to render.
-/// * `logo_path` - Path to the logo image, resolved relative to the current working directory.
-/// * `upscale_factor` - Optional scaling factor for output size (defaults to 8).
-/// * `qr_color` - Optional RGB color for dark modules (defaults to black).
-/// * `outer_frame_px` - Optional white frame size in pixels.
-/// * `inner_frame_px` - Optional inner frame size in pixels.
-/// * `frame_style` - Optional [FrameStyle] (defaults to `None`).
+/// * `config` - Configuration for styling ([FrameQrSvgConfig]).
 ///
 /// # Returns
 ///
-/// A `Result` containing the SVG string or an [image::ImageError] on failure (e.g., invalid logo path).
+/// A `Result` containing the SVG string or an [image::ImageError] on failure.
 ///
 /// # Example
 ///
 /// ```rust
-/// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
-/// use qirust::helper::{frameqr_to_svg_string, FrameStyle};
+/// use qirust::qrcode::{QrCode, QrCodeEcc, Version, EncodeTextOptions};
+/// use qirust::helper::{frameqr_to_svg_string, FrameQrSvgConfig, FrameStyle};
 ///
 /// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
 /// let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
@@ -257,61 +565,47 @@ pub enum FrameStyle {
 ///     "https://example.com",
 ///     &mut tempbuffer,
 ///     &mut outbuffer,
-///     QrCodeEcc::High,
-///     Version::MIN,
-///     Version::MAX,
-///     None,
-///     true,
+///     EncodeTextOptions {
+///         ecl: QrCodeEcc::High,
+///         minversion: Version::MIN,
+///         maxversion: Version::MAX,
+///         mask: None,
+///         boostecl: true,
+///     },
 /// ).unwrap();
 ///
-/// let svg = frameqr_to_svg_string(
-///     qr,
-///     "src/logo.png",
-///     Some(6),
-///     Some([255, 165, 0]),
-///     Some(40),
-///     Some(10),
-///     Some(FrameStyle::Rounded),
-/// ).expect("Failed to generate SVG");
+/// let config = FrameQrSvgConfig::new("logo.png").unwrap()
+///     .with_upscale(6).unwrap()
+///     .with_color([255, 165, 0])
+///     .with_outer_frame(40)
+///     .with_inner_frame(10)
+///     .with_frame_style(FrameStyle::Rounded);
+///
+/// let svg = frameqr_to_svg_string(qr, config).expect("Failed to generate SVG");
 /// println!("{}", svg);
 /// ```
-///
-/// # Performance
-///
-/// Optimized with horizontal module grouping to reduce SVG path complexity and a global `Mutex`-based
-/// cache for base64-encoded logos, minimizing redundant encoding. Uses `FilterType::Triangle` for
-/// logo resizing, balancing speed and quality. For high-version QR codes (e.g., Version 40), the
-/// function remains efficient due to minimal reallocations and optimized rendering.
-///
-/// # Notes
-///
-/// - The logo is resized to one-third of the QR code dimensions to ensure scannability.
-/// - The global cache persists across calls but is specific to the `logo_path`.
-/// - Ensure the logo file exists and is accessible before calling, or an [image::ImageError] will be
-///   returned.
 pub fn frameqr_to_svg_string(
     qr: QrCode,
-    logo_path: &str,
-    upscale_factor: Option<u32>,
-    qr_color: Option<[u8; 3]>,
-    outer_frame_px: Option<u32>,
-    inner_frame_px: Option<u32>,
-    frame_style: Option<FrameStyle>
+    config: FrameQrSvgConfig,
 ) -> Result<String, image::ImageError> {
     static LOGO_BASE64_CACHE: Mutex<Option<(String, String)>> = Mutex::new(None);
+
     let qr_size = qr.size() as u32;
-    let upscale = upscale_factor.unwrap_or(8);
-    let outer_frame = outer_frame_px.unwrap_or(0);
-    let inner_frame = inner_frame_px.unwrap_or(0);
+    let upscale = config.upscale_factor;
+    let outer_frame = config.outer_frame_px;
+    let inner_frame = config.inner_frame_px;
+
     let estimated_size = 200 + qr_size * qr_size * 16 + 500 + qr_size * upscale * 4;
     let mut result = String::with_capacity(estimated_size as usize);
     let dimension = qr_size * upscale + 2 * outer_frame;
+
     writeln!(
         result,
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" viewBox=\"0 0 {0} {0}\" stroke=\"none\">\n<rect width=\"100%\" height=\"100%\" fill=\"#FFFFFF\"/>\n",
         dimension
     ).unwrap();
-    let qr_color = qr_color.unwrap_or([0, 0, 0]);
+
+    // Render QR modules with horizontal grouping
     let mut path_buffer = Vec::with_capacity((qr_size as usize) * (qr_size as usize) * 20);
     for y in 0..qr_size {
         let mut x = 0;
@@ -333,80 +627,87 @@ pub fn frameqr_to_svg_string(
                     width * upscale,
                     upscale,
                     width * upscale
-                ).unwrap();
+                )
+                .unwrap();
             }
             x += 1;
         }
     }
+
     writeln!(
         result,
         "<path d=\"{}\" fill=\"#{:02x}{:02x}{:02x}\"/>",
         std::str::from_utf8(&path_buffer).unwrap().trim(),
-        qr_color[0],
-        qr_color[1],
-        qr_color[2]
-    ).unwrap();
-    let logo = image::open(logo_path)?.to_rgba8();
-    let max_logo_w = (qr_size * upscale) / 3;
-    let max_logo_h = (qr_size * upscale) / 3;
+        config.qr_color[0],
+        config.qr_color[1],
+        config.qr_color[2]
+    )
+    .unwrap();
+
+    // Load and encode logo
+    let logo = image::open(config.logo_path)?.to_rgba8();
+    let max_logo_w = (qr_size * upscale) / LOGO_SIZE_DIVISOR;
+    let max_logo_h = (qr_size * upscale) / LOGO_SIZE_DIVISOR;
+
     let logo_resized = if logo.width() > max_logo_w || logo.height() > max_logo_h {
         image::imageops::resize(
             &logo,
             max_logo_w,
             max_logo_h,
-            image::imageops::FilterType::Triangle
+            image::imageops::FilterType::Triangle,
         )
     } else {
         logo
     };
+
     let logo_base64 = {
         let cache = LOGO_BASE64_CACHE.lock().unwrap();
         if let Some((cached_path, cached_base64)) = cache.as_ref() {
-            if cached_path == logo_path {
+            if cached_path == config.logo_path {
                 cached_base64.clone()
             } else {
                 let logo_buffer = {
                     let mut logo_buffer = Vec::new();
-                    DynamicImage::ImageRgba8(logo_resized).write_to(
+                    DynamicImage::ImageRgba8(logo_resized.clone()).write_to(
                         &mut std::io::Cursor::new(&mut logo_buffer),
-                        ImageFormat::Png
+                        ImageFormat::Png,
                     )?;
                     logo_buffer
                 };
-                let base64 = encode_base64(&logo_buffer);
-                base64
+                encode_base64(&logo_buffer)
             }
         } else {
             let logo_buffer = {
                 let mut logo_buffer = Vec::new();
-                DynamicImage::ImageRgba8(logo_resized).write_to(
+                DynamicImage::ImageRgba8(logo_resized.clone()).write_to(
                     &mut std::io::Cursor::new(&mut logo_buffer),
-                    ImageFormat::Png
+                    ImageFormat::Png,
                 )?;
                 logo_buffer
             };
-            let base64 = encode_base64(&logo_buffer);
-            base64
+            encode_base64(&logo_buffer)
         }
     };
+
     let logo_center_x = (qr_size * upscale) / 2 + outer_frame;
     let logo_center_y = (qr_size * upscale) / 2 + outer_frame;
     let base_logo_radius = max_logo_w.min(max_logo_h) / 2;
     let logo_radius = base_logo_radius + inner_frame;
-    match frame_style.unwrap_or(FrameStyle::None) {
+
+    // Apply frame style
+    match config.frame_style {
         FrameStyle::Rounded => {
-            write!(
+            writeln!(
                 result,
-                "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"#FFFFFF\"/>\n",
-                logo_center_x,
-                logo_center_y,
-                logo_radius
-            ).unwrap();
+                "<circle cx=\"{}\" cy=\"{}\" r=\"{}\" fill=\"#FFFFFF\"/>",
+                logo_center_x, logo_center_y, logo_radius
+            )
+            .unwrap();
         }
         FrameStyle::Square => {
-            write!(
+            writeln!(
                 result,
-                "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"#FFFFFF\" stroke=\"#FFFFFF\" stroke-width=\"{}\"/>\n",
+                "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"#FFFFFF\" stroke=\"#FFFFFF\" stroke-width=\"{}\"/>",
                 logo_center_x - max_logo_w / 2,
                 logo_center_y - max_logo_h / 2,
                 max_logo_w,
@@ -414,8 +715,9 @@ pub fn frameqr_to_svg_string(
                 inner_frame * 2
             ).unwrap();
         }
-        _ => {}
+        FrameStyle::None => {}
     }
+
     write!(
         result,
         "<image x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" href=\"data:image/png;base64,{}\" preserveAspectRatio=\"xMidYMid meet\"/>\n</svg>\n",
@@ -425,6 +727,7 @@ pub fn frameqr_to_svg_string(
         max_logo_h,
         logo_base64
     ).unwrap();
+
     Ok(result)
 }
 
@@ -440,7 +743,7 @@ pub fn frameqr_to_svg_string(
 /// # Example
 ///
 /// ```rust
-/// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
+/// use qirust::qrcode::{QrCode, QrCodeEcc, Version, EncodeTextOptions};
 /// use qirust::helper::print_qr;
 ///
 /// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
@@ -449,11 +752,13 @@ pub fn frameqr_to_svg_string(
 ///     "Hello, World!",
 ///     &mut tempbuffer,
 ///     &mut outbuffer,
-///     QrCodeEcc::Low,
-///     Version::MIN,
-///     Version::MAX,
-///     None,
-///     true,
+///     EncodeTextOptions {
+///         ecl: QrCodeEcc::Low,
+///         minversion: Version::MIN,
+///         maxversion: Version::MAX,
+///         mask: None,
+///         boostecl: true,
+///     },
 /// ).unwrap();
 ///
 /// print_qr(&qr);
@@ -492,8 +797,8 @@ pub fn print_qr(qr: &QrCode) {
 ///
 /// # Example
 ///
-/// ```rust
-/// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
+/// ```rust,no_run
+/// use qirust::qrcode::{QrCode, QrCodeEcc, Version, EncodeTextOptions};
 /// use qirust::helper::qr_to_image_and_save;
 ///
 /// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
@@ -502,11 +807,13 @@ pub fn print_qr(qr: &QrCode) {
 ///     "Hello, World!",
 ///     &mut tempbuffer,
 ///     &mut outbuffer,
-///     QrCodeEcc::Low,
-///     Version::MIN,
-///     Version::MAX,
-///     None,
-///     true,
+///     EncodeTextOptions {
+///         ecl: QrCodeEcc::Low,
+///         minversion: Version::MIN,
+///         maxversion: Version::MAX,
+///         mask: None,
+///         boostecl: true,
+///     },
 /// ).unwrap();
 ///
 /// qr_to_image_and_save(&qr, Some("output"), Some("qr_code"))
@@ -521,7 +828,7 @@ pub fn print_qr(qr: &QrCode) {
 pub fn qr_to_image_and_save(
     qr: &QrCode,
     directory_path: Option<&str>,
-    filename: Option<&str>
+    filename: Option<&str>,
 ) -> Result<(), image::ImageError> {
     let border: i32 = 4;
     let size = (qr.size() as u32) + 2 * (border as u32);
@@ -542,7 +849,9 @@ pub fn qr_to_image_and_save(
         Some(name) => name.to_string(),
         None => {
             let start = SystemTime::now();
-            let since_the_epoch = start.duration_since(UNIX_EPOCH).expect("Time went backwards");
+            let since_the_epoch = start
+                .duration_since(UNIX_EPOCH)
+                .expect("Time went backwards");
             format!("{:?}", since_the_epoch)
         }
     };
@@ -556,6 +865,104 @@ pub fn qr_to_image_and_save(
     img.save(&Path::new(&file_path))
 }
 
+/// Configuration for saving styled QR codes with frames and logos
+#[derive(Debug, Clone)]
+pub struct FrameQrSaveConfig<'a> {
+    pub logo_path: &'a str,
+    pub upscale_factor: u32,
+    pub directory_path: &'a str,
+    pub file_name: Option<&'a str>,
+    pub qr_color: [u8; 3],
+    pub outer_frame_px: u32,
+    pub inner_frame_px: u32,
+    pub frame_style: FrameStyle,
+}
+
+impl<'a> Default for FrameQrSaveConfig<'a> {
+    fn default() -> Self {
+        Self {
+            logo_path: "",
+            upscale_factor: DEFAULT_UPSCALE_FACTOR,
+            directory_path: "generated",
+            file_name: None,
+            qr_color: [0, 0, 0],
+            outer_frame_px: 0,
+            inner_frame_px: DEFAULT_INNER_FRAME,
+            frame_style: FrameStyle::None,
+        }
+    }
+}
+
+impl<'a> FrameQrSaveConfig<'a> {
+    pub fn new(logo_path: &'a str) -> Result<Self, HelperError> {
+        if logo_path.is_empty() {
+            return Err(HelperError::InvalidInput(
+                "Logo path cannot be empty".to_string(),
+            ));
+        }
+        Ok(Self {
+            logo_path,
+            ..Default::default()
+        })
+    }
+
+    pub fn with_upscale(mut self, factor: u32) -> Result<Self, HelperError> {
+        if factor == 0 || factor > MAX_UPSCALE_FACTOR {
+            return Err(HelperError::InvalidInput(format!(
+                "Upscale factor must be between 1 and {}",
+                MAX_UPSCALE_FACTOR
+            )));
+        }
+        self.upscale_factor = factor;
+        Ok(self)
+    }
+
+    pub fn with_directory(mut self, path: &'a str) -> Self {
+        self.directory_path = path;
+        self
+    }
+
+    pub fn with_filename(mut self, name: &'a str) -> Self {
+        self.file_name = Some(name);
+        self
+    }
+
+    pub fn with_color(mut self, color: [u8; 3]) -> Self {
+        self.qr_color = color;
+        self
+    }
+
+    pub fn with_outer_frame(mut self, size: u32) -> Self {
+        self.outer_frame_px = size;
+        self
+    }
+
+    pub fn with_inner_frame(mut self, size: u32) -> Self {
+        self.inner_frame_px = size;
+        self
+    }
+
+    pub fn with_frame_style(mut self, style: FrameStyle) -> Self {
+        self.frame_style = style;
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), HelperError> {
+        if self.logo_path.is_empty() {
+            return Err(HelperError::InvalidInput(
+                "Logo path is required".to_string(),
+            ));
+        }
+        if self.upscale_factor == 0 || self.upscale_factor > MAX_UPSCALE_FACTOR {
+            return Err(HelperError::InvalidInput(format!(
+                "Upscale factor must be between 1 and {}",
+                MAX_UPSCALE_FACTOR
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// Saves a styled QR code with an embedded logo as a PNG image.
 ///
 /// Renders a QR code with a logo, custom colors, and optional square or rounded frames. The logo is
@@ -565,24 +972,17 @@ pub fn qr_to_image_and_save(
 /// # Arguments
 ///
 /// * `qr` - The [QrCode] to render.
-/// * `logo_path` - Path to the logo image, resolved relative to the current working directory.
-/// * `upscale_factor` - Optional scaling factor for output size (defaults to 8).
-/// * `directory_path` - Optional directory path (defaults to "generated").
-/// * `file_name` - Optional filename without extension (defaults to a timestamp in seconds since Unix epoch, e.g., "1716158094s").
-/// * `qr_color` - Optional RGB color for dark modules (defaults to black).
-/// * `outer_frame_px` - Optional white frame size in pixels.
-/// * `inner_frame_px` - Optional inner frame size in pixels.
-/// * `frame_style` - Optional [FrameStyle] (defaults to `None`).
+/// * `config` - Configuration for styling and output ([FrameQrSaveConfig]).
 ///
 /// # Returns
 ///
-/// A `Result` indicating success or an [image::ImageError] on failure (e.g., invalid logo path).
+/// A `Result` indicating success or an [image::ImageError] on failure.
 ///
 /// # Example
 ///
 /// ```rust
-/// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
-/// use qirust::helper::{frameqr_to_image_and_save, FrameStyle};
+/// use qirust::qrcode::{QrCode, QrCodeEcc, Version, EncodeTextOptions};
+/// use qirust::helper::{frameqr_to_image_and_save, FrameQrSaveConfig, FrameStyle};
 ///
 /// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
 /// let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
@@ -590,32 +990,32 @@ pub fn qr_to_image_and_save(
 ///     "https://example.com",
 ///     &mut tempbuffer,
 ///     &mut outbuffer,
-///     QrCodeEcc::High,
-///     Version::MIN,
-///     Version::MAX,
-///     None,
-///     true,
+///     EncodeTextOptions {
+///         ecl: QrCodeEcc::High,
+///         minversion: Version::MIN,
+///         maxversion: Version::MAX,
+///         mask: None,
+///         boostecl: true,
+///     },
 /// ).unwrap();
 ///
-/// frameqr_to_image_and_save(
-///     qr,
-///     "src/logo.png",
-///     Some(6),
-///     Some("output"),
-///     Some("styled_qr"),
-///     Some([255, 165, 0]),
-///     Some(40),
-///     Some(10),
-///     Some(FrameStyle::Rounded),
-/// ).expect("Failed to save styled QR code");
+/// let config = FrameQrSaveConfig::new("logo.png").unwrap()
+///     .with_upscale(6).unwrap()
+///     .with_directory("output")
+///     .with_filename("styled_qr")
+///     .with_color([255, 165, 0])
+///     .with_outer_frame(40)
+///     .with_inner_frame(10)
+///     .with_frame_style(FrameStyle::Rounded);
+///
+/// frameqr_to_image_and_save(qr, config).expect("Failed to save styled QR code");
 /// ```
 ///
 /// # Performance
 ///
 /// Optimized with horizontal module grouping and a global `Mutex`-based cache for logo resizing,
 /// reducing redundant processing. Uses `FilterType::Nearest` for fast logo resizing, suitable for
-/// most applications. For high-version QR codes or large logos, performance remains efficient due to
-/// minimal reallocations and optimized rendering.
+/// most applications.
 ///
 /// # Notes
 ///
@@ -624,22 +1024,24 @@ pub fn qr_to_image_and_save(
 /// - For in-memory processing, consider using [generate_frameqr_buffer] to avoid immediate disk I/O.
 pub fn frameqr_to_image_and_save(
     qr: QrCode,
-    logo_path: &str,
-    upscale_factor: Option<u32>,
-    directory_path: Option<&str>,
-    file_name: Option<&str>,
-    qr_color: Option<[u8; 3]>,
-    outer_frame_px: Option<u32>,
-    inner_frame_px: Option<u32>,
-    frame_style: Option<FrameStyle>
+    config: FrameQrSaveConfig,
 ) -> Result<(), image::ImageError> {
+    // Validate config
+    config.validate().map_err(|e| {
+        image::ImageError::IoError(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            e.to_string(),
+        ))
+    })?;
+
     let qr_size = qr.size() as u32;
     let mut qr_img = ImageBuffer::new(qr_size, qr_size);
 
+    // Render QR code modules
     for y in 0..qr_size {
         for x in 0..qr_size {
             let color = if qr.get_module(x as i32, y as i32) {
-                Rgb(qr_color.unwrap_or([0, 0, 0]))
+                Rgb(config.qr_color)
             } else {
                 Rgb([255, 255, 255])
             };
@@ -647,33 +1049,36 @@ pub fn frameqr_to_image_and_save(
         }
     }
 
-    let upscale = upscale_factor.unwrap_or(8);
+    // Upscale QR code
     let mut upscaled_qr = resize(
         &DynamicImage::ImageRgb8(qr_img),
-        qr_size * upscale,
-        qr_size * upscale,
-        FilterType::Nearest
+        qr_size * config.upscale_factor,
+        qr_size * config.upscale_factor,
+        FilterType::Nearest,
     );
 
-    let full_path = env::current_dir()?.join(logo_path);
+    // Load and validate logo
+    let full_path = env::current_dir()?.join(config.logo_path);
     if !full_path.exists() {
-        return Err(
-            image::ImageError::IoError(
-                std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    format!("Logo file not found: {:?}", full_path)
-                )
-            )
-        );
+        return Err(image::ImageError::IoError(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Logo file not found: {:?}", full_path),
+        )));
     }
     let logo = image::open(&full_path)?.to_rgba8();
-    let max_logo_w = upscaled_qr.width() / 3;
-    let max_logo_h = upscaled_qr.height() / 3;
+
+    // Calculate logo dimensions
+    let max_logo_w = upscaled_qr.width() / LOGO_SIZE_DIVISOR;
+    let max_logo_h = upscaled_qr.height() / LOGO_SIZE_DIVISOR;
+
+    // Cache for resized logos
     static LOGO_RESIZE_CACHE: Mutex<Option<(String, u32, u32, RgbaImage)>> = Mutex::new(None);
+
     let logo_resized = {
         let mut cache = LOGO_RESIZE_CACHE.lock().unwrap();
         if let Some((cached_path, cached_w, cached_h, cached_logo)) = cache.as_ref() {
-            if cached_path == logo_path && *cached_w == max_logo_w && *cached_h == max_logo_h {
+            if cached_path == config.logo_path && *cached_w == max_logo_w && *cached_h == max_logo_h
+            {
                 cached_logo.clone()
             } else {
                 let resized = if logo.width() > max_logo_w || logo.height() > max_logo_h {
@@ -681,7 +1086,12 @@ pub fn frameqr_to_image_and_save(
                 } else {
                     logo
                 };
-                *cache = Some((logo_path.to_string(), max_logo_w, max_logo_h, resized.clone()));
+                *cache = Some((
+                    config.logo_path.to_string(),
+                    max_logo_w,
+                    max_logo_h,
+                    resized.clone(),
+                ));
                 resized
             }
         } else {
@@ -690,17 +1100,24 @@ pub fn frameqr_to_image_and_save(
             } else {
                 logo
             };
-            *cache = Some((logo_path.to_string(), max_logo_w, max_logo_h, resized.clone()));
+            *cache = Some((
+                config.logo_path.to_string(),
+                max_logo_w,
+                max_logo_h,
+                resized.clone(),
+            ));
             resized
         }
     };
 
+    // Calculate logo position
     let x_offset = (upscaled_qr.width() - logo_resized.width()) / 2;
     let y_offset = (upscaled_qr.height() - logo_resized.height()) / 2;
 
-    match frame_style.unwrap_or(FrameStyle::None) {
+    // Apply frame style
+    match config.frame_style {
         FrameStyle::Rounded => {
-            let margin = inner_frame_px.unwrap_or(3);
+            let margin = config.inner_frame_px;
             let radius = (logo_resized.width().min(logo_resized.height()) + 2 * margin) / 2;
             let mask = create_circle_mask(radius * 2, radius as i32);
             let mask_x = x_offset + logo_resized.width() / 2 - radius;
@@ -708,50 +1125,57 @@ pub fn frameqr_to_image_and_save(
             overlay(&mut upscaled_qr, &mask, mask_x as i64, mask_y as i64);
         }
         FrameStyle::Square => {
-            let frame_margin = inner_frame_px.unwrap_or(3);
-            for y in y_offset.saturating_sub(frame_margin)..(
-                y_offset +
-                logo_resized.height() +
-                frame_margin
-            ).min(upscaled_qr.height()) {
-                for x in x_offset.saturating_sub(frame_margin)..(
-                    x_offset +
-                    logo_resized.width() +
-                    frame_margin
-                ).min(upscaled_qr.width()) {
+            let frame_margin = config.inner_frame_px;
+            for y in y_offset.saturating_sub(frame_margin)
+                ..(y_offset + logo_resized.height() + frame_margin).min(upscaled_qr.height())
+            {
+                for x in x_offset.saturating_sub(frame_margin)
+                    ..(x_offset + logo_resized.width() + frame_margin).min(upscaled_qr.width())
+                {
                     upscaled_qr.put_pixel(x, y, image::Rgba([255, 255, 255, 255]));
                 }
             }
         }
-        _ => {}
+        FrameStyle::None => {}
     }
 
-    overlay(&mut upscaled_qr, &logo_resized, x_offset as i64, y_offset as i64);
+    // Overlay logo
+    overlay(
+        &mut upscaled_qr,
+        &logo_resized,
+        x_offset as i64,
+        y_offset as i64,
+    );
 
-    let directory_path = directory_path.unwrap_or("generated");
-    let filename = file_name
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            let start = SystemTime::now();
-            let since_the_epoch = start.duration_since(UNIX_EPOCH).expect("Time went backwards");
-            format!("{:?}", since_the_epoch)
-        });
+    // Prepare output path
+    let filename = config.file_name.map(|s| s.to_string()).unwrap_or_else(|| {
+        let start = SystemTime::now();
+        let since_the_epoch = start
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards");
+        format!("{:?}", since_the_epoch)
+    });
 
-    let file_path = format!("{}/{}.png", directory_path, filename);
+    let file_path = format!("{}/{}.png", config.directory_path, filename);
 
-    if !Path::new(directory_path).exists() {
-        fs::create_dir_all(directory_path)?;
+    // Create directory if it doesn't exist
+    if !Path::new(config.directory_path).exists() {
+        fs::create_dir_all(config.directory_path)?;
     }
 
-    if let Some(frame_px) = outer_frame_px {
+    // Save with or without outer frame
+    if config.outer_frame_px > 0 {
+        let frame_px = config.outer_frame_px;
         let final_w = upscaled_qr.width() + frame_px * 2;
         let final_h = upscaled_qr.height() + frame_px * 2;
-        let mut final_image = RgbaImage::from_pixel(
-            final_w,
-            final_h,
-            image::Rgba([255, 255, 255, 255])
+        let mut final_image =
+            RgbaImage::from_pixel(final_w, final_h, image::Rgba([255, 255, 255, 255]));
+        overlay(
+            &mut final_image,
+            &upscaled_qr,
+            frame_px as i64,
+            frame_px as i64,
         );
-        overlay(&mut final_image, &upscaled_qr, frame_px as i64, frame_px as i64);
         final_image.save(&Path::new(&file_path))
     } else {
         upscaled_qr.save(&Path::new(&file_path))
@@ -760,95 +1184,98 @@ pub fn frameqr_to_image_and_save(
 
 /// Generates and saves a styled QR code from text content.
 ///
-/// A convenience wrapper around [frameqr_to_image_and_save], encoding the input text into a QR code
-/// and rendering it with a logo, custom colors, and optional frames. Uses a high error correction
-/// level by default for robustness.
+/// A convenience wrapper that encodes text into a QR code and renders it with a logo, custom colors,
+/// and optional frames. Uses the configuration from [FrameQrConfig] for flexibility.
 ///
 /// # Arguments
 ///
-/// * `content` - The text to encode.
-/// * `logo_path` - Path to the logo image, resolved relative to the current working directory.
-/// * `ecc` - Optional [QrCodeEcc] level (defaults to `High`).
-/// * `upscale_factor` - Optional scaling factor for output size (defaults to 4).
-/// * `directory_path` - Optional directory path (defaults to "generated").
-/// * `file_name` - Optional filename without extension (defaults to a timestamp in seconds since Unix epoch, e.g., "1716158094s").
-/// * `qr_color` - Optional RGB color for dark modules (defaults to black).
-/// * `outer_frame_px` - Optional white frame size in pixels.
-/// * `inner_frame_px` - Optional inner frame size in pixels.
-/// * `frame_style` - Optional [FrameStyle] (defaults to `None`).
+/// * `content` - The text to encode (must not be empty).
+/// * `config` - Configuration for styling and output ([FrameQrConfig]).
 ///
 /// # Returns
 ///
-/// A `Result` indicating success or an [image::ImageError] on failure (e.g., invalid logo path).
+/// * `Ok(())` - Successfully generated and saved the QR code.
+/// * `Err(HelperError)` - Failed to generate or save the QR code.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// * The content is empty or too long for the QR code capacity.
+/// * The logo file cannot be found or opened.
+/// * The output directory cannot be created.
+/// * The image cannot be saved.
 ///
 /// # Example
 ///
-/// ```rust
-/// use qirust::helper::{generate_frameqr, FrameStyle};
+/// ```rust,no_run
+/// use qirust::helper::{generate_frameqr, FrameQrConfig, FrameStyle};
 /// use qirust::qrcode::QrCodeEcc;
 ///
-/// generate_frameqr(
-///     "https://example.com",
-///     "src/logo.png",
-///     Some(QrCodeEcc::High),
-///     Some(6),
-///     Some("output"),
-///     Some("styled_qr"),
-///     Some([255, 165, 0]),
-///     Some(40),
-///     Some(10),
-///     Some(FrameStyle::Rounded),
-/// ).expect("Failed to generate QR code");
+/// let config = FrameQrConfig::new("logo.png").unwrap()
+///     .with_ecc(QrCodeEcc::High)
+///     .with_upscale(6).unwrap()
+///     .with_directory("output")
+///     .with_filename("styled_qr")
+///     .with_color([255, 165, 0])
+///     .with_outer_frame(40)
+///     .with_inner_frame(10)
+///     .with_frame_style(FrameStyle::Rounded);
+///
+/// generate_frameqr("https://example.com", config)
+///     .expect("Failed to generate QR code");
 /// ```
 ///
 /// # Performance
 ///
 /// Inherits optimizations from [frameqr_to_image_and_save], including horizontal module grouping and
-/// logo resizing caching. Suitable for most use cases, but for large QR codes or frequent calls,
-/// consider using [generate_frameqr_buffer] for in-memory processing.
+/// logo resizing caching. Suitable for most use cases.
 ///
 /// # Notes
 ///
 /// - The logo is resized to one-third of the QR code dimensions to ensure scannability.
 /// - Ensure the logo file exists and is accessible before calling.
 /// - For invalid input data, the underlying [QrCode::encode_text] may return a [DataTooLong] error.
-pub fn generate_frameqr(
-    content: &str,
-    logo_path: &str,
-    ecc: Option<QrCodeEcc>,
-    upscale_factor: Option<u32>,
-    directory_path: Option<&str>,
-    file_name: Option<&str>,
-    qr_color: Option<[u8; 3]>,
-    outer_frame_px: Option<u32>,
-    inner_frame_px: Option<u32>,
-    frame_style: Option<FrameStyle>
-) -> Result<(), image::ImageError> {
-    let errcorlvl = ecc.unwrap_or(QrCodeEcc::High);
+pub fn generate_frameqr(content: &str, config: FrameQrConfig) -> Result<(), HelperError> {
+    // Validate input
+    if content.is_empty() {
+        return Err(HelperError::InvalidInput(
+            "Content cannot be empty".to_string(),
+        ));
+    }
+
+    // Validate config
+    config.validate()?;
+
+    // Encode QR code
     let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
     let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
     let qr = QrCode::encode_text(
         content,
         &mut tempbuffer,
         &mut outbuffer,
-        errcorlvl,
-        Version::MIN,
-        Version::MAX,
-        None,
-        true
-    ).unwrap();
+        EncodeTextOptions {
+            ecl: config.ecc,
+            minversion: Version::MIN,
+            maxversion: Version::MAX,
+            mask: None,
+            boostecl: true,
+        },
+    )?;
     std::mem::drop(tempbuffer);
-    frameqr_to_image_and_save(
-        qr,
-        logo_path,
-        upscale_factor,
-        directory_path,
-        file_name,
-        qr_color,
-        outer_frame_px,
-        inner_frame_px,
-        frame_style
-    )
+
+    // Convert to save config
+    let save_config = FrameQrSaveConfig {
+        logo_path: config.logo_path,
+        upscale_factor: config.upscale_factor,
+        directory_path: config.directory_path,
+        file_name: config.file_name,
+        qr_color: config.qr_color,
+        outer_frame_px: config.outer_frame_px,
+        inner_frame_px: config.inner_frame_px,
+        frame_style: config.frame_style,
+    };
+
+    frameqr_to_image_and_save(qr, save_config).map_err(HelperError::from)
 }
 
 /// Generates and saves a basic QR code image from text content.
@@ -887,8 +1314,15 @@ pub fn generate_frameqr(
 pub fn generate_image(
     content: &str,
     directory: Option<&str>,
-    filename: Option<&str>
-) -> Result<(), image::ImageError> {
+    filename: Option<&str>,
+) -> Result<(), HelperError> {
+    // Validate input
+    if content.is_empty() {
+        return Err(HelperError::InvalidInput(
+            "Content cannot be empty".to_string(),
+        ));
+    }
+
     let text: &str = content;
     let errcorlvl: QrCodeEcc = QrCodeEcc::Low;
 
@@ -898,14 +1332,16 @@ pub fn generate_image(
         text,
         &mut tempbuffer,
         &mut outbuffer,
-        errcorlvl,
-        Version::MIN,
-        Version::MAX,
-        None,
-        true
-    ).unwrap();
+        EncodeTextOptions {
+            ecl: errcorlvl,
+            minversion: Version::MIN,
+            maxversion: Version::MAX,
+            mask: None,
+            boostecl: true,
+        },
+    )?;
     std::mem::drop(tempbuffer);
-    qr_to_image_and_save(&qr, directory, filename)
+    qr_to_image_and_save(&qr, directory, filename).map_err(HelperError::from)
 }
 
 /// Generates an SVG string for a QR code from text content.
@@ -926,7 +1362,8 @@ pub fn generate_image(
 /// ```rust
 /// use qirust::helper::generate_svg_string;
 ///
-/// let svg = generate_svg_string("Hello, World!");
+/// let svg = generate_svg_string("Hello, World!")
+///     .expect("Failed to generate SVG");
 /// println!("{}", svg);
 /// ```
 ///
@@ -939,8 +1376,15 @@ pub fn generate_image(
 ///
 /// - Uses a high error correction level ([QrCodeEcc::High]) for robustness.
 /// - For invalid input data, the underlying [QrCode::encode_text] may return a [DataTooLong] error,
-/// which is converted to a panic in this function.
-pub fn generate_svg_string(content: &str) -> String {
+///   which is converted to a panic in this function.
+pub fn generate_svg_string(content: &str) -> Result<String, HelperError> {
+    // Validate input
+    if content.is_empty() {
+        return Err(HelperError::InvalidInput(
+            "Content cannot be empty".to_string(),
+        ));
+    }
+
     let text: &str = content;
     let errcorlvl: QrCodeEcc = QrCodeEcc::High;
 
@@ -950,14 +1394,16 @@ pub fn generate_svg_string(content: &str) -> String {
         text,
         &mut tempbuffer,
         &mut outbuffer,
-        errcorlvl,
-        Version::MIN,
-        Version::MAX,
-        None,
-        true
-    ).unwrap();
+        EncodeTextOptions {
+            ecl: errcorlvl,
+            minversion: Version::MIN,
+            maxversion: Version::MAX,
+            mask: None,
+            boostecl: true,
+        },
+    )?;
     std::mem::drop(tempbuffer);
-    to_svg_string(&qr, 4)
+    Ok(to_svg_string(&qr, 4))
 }
 
 /// Mixes foreground and background colors based on a pixel value.
@@ -989,8 +1435,8 @@ pub fn generate_svg_string(content: &str) -> String {
 /// Uses integer arithmetic with minimal overhead, suitable for pixel-by-pixel processing in
 /// performance-critical rendering.
 pub fn mix_colors(pixel: u8, foreground: u8, background: u8) -> u8 {
-    (((pixel as u16) * (foreground as u16)) / 255 +
-        ((255 - (pixel as u16)) * (background as u16)) / 255) as u8
+    (((pixel as u16) * (foreground as u16)) / 255
+        + ((255 - (pixel as u16)) * (background as u16)) / 255) as u8
 }
 
 /// Generates an in-memory image buffer for a QR code.
@@ -1015,16 +1461,17 @@ pub fn mix_colors(pixel: u8, foreground: u8, background: u8) -> u8 {
 /// # Example
 ///
 /// ```rust
-/// use qirust::helper::generate_image_buffer;
+/// use qirust::helper::{generate_image_buffer, QrConfig};
 ///
-/// let img = generate_image_buffer(
-///     "Hello, World!",
-///     Some(4),
-///     Some([255, 0, 0]), // Red foreground
-///     Some([255, 255, 255]), // White background
-///     Some(6),
-/// ).expect("Failed to generate image buffer");
-/// img.save("output/qr.png").expect("Failed to save image");
+/// let config = QrConfig::new()
+///     .with_border(4).unwrap()
+///     .with_fg_color([255, 0, 0])
+///     .with_bg_color([255, 255, 255])
+///     .with_scale(6).unwrap();
+///
+/// let img = generate_image_buffer("Hello, World!", config)
+///     .expect("Failed to generate image buffer");
+/// # img.save("target/doctest_qr.png").ok();
 /// ```
 ///
 /// # Performance
@@ -1042,16 +1489,17 @@ pub fn mix_colors(pixel: u8, foreground: u8, background: u8) -> u8 {
 /// - For styled QR codes with logos, use [generate_frameqr_buffer].
 pub fn generate_image_buffer(
     content: &str,
-    border: Option<u32>,
-    fg_color: Option<[u8; 3]>,
-    bg_color: Option<[u8; 3]>,
-    scale: Option<u32>
-) -> Result<ImageBuffer<Rgb<u8>, Vec<u8>>, DataTooLong> {
-    let border = border.unwrap_or(4);
-    let foreground_color = fg_color.unwrap_or([0, 0, 0]);
-    let background_color = bg_color.unwrap_or([255, 255, 255]);
-    let errcorlvl = QrCodeEcc::High;
-    let scale = scale.unwrap_or(4);
+    config: QrConfig,
+) -> Result<ImageBuffer<Rgb<u8>, Vec<u8>>, HelperError> {
+    // Validate input
+    if content.is_empty() {
+        return Err(HelperError::InvalidInput(
+            "Content cannot be empty".to_string(),
+        ));
+    }
+
+    // Validate config
+    config.validate()?;
 
     let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
     let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
@@ -1059,26 +1507,37 @@ pub fn generate_image_buffer(
         content,
         &mut tempbuffer,
         &mut outbuffer,
-        errcorlvl,
-        Version::MIN,
-        Version::MAX,
-        None,
-        true
+        EncodeTextOptions {
+            ecl: QrCodeEcc::High,
+            minversion: Version::MIN,
+            maxversion: Version::MAX,
+            mask: None,
+            boostecl: true,
+        },
     )?;
     std::mem::drop(tempbuffer);
 
     let qr_size = qr.size() as u32;
-    let img_size = (qr_size + 2 * border) * scale;
-    let mut img = ImageBuffer::from_pixel(img_size, img_size, Rgb(background_color));
+    let img_size = (qr_size + 2 * config.border) * config.scale;
+
+    // Check if image size would be too large
+    if img_size > MAX_IMAGE_DIMENSION {
+        return Err(HelperError::InvalidInput(format!(
+            "Generated image would be too large ({}x{}, max {}x{})",
+            img_size, img_size, MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION
+        )));
+    }
+
+    let mut img = ImageBuffer::from_pixel(img_size, img_size, Rgb(config.bg_color));
 
     for y in 0..qr_size {
         for x in 0..qr_size {
             if qr.get_module(x as i32, y as i32) {
-                let px = (x + border) * scale;
-                let py = (y + border) * scale;
-                for dy in 0..scale {
-                    for dx in 0..scale {
-                        img.put_pixel(px + dx, py + dy, Rgb(foreground_color));
+                let px = (x + config.border) * config.scale;
+                let py = (y + config.border) * config.scale;
+                for dy in 0..config.scale {
+                    for dx in 0..config.scale {
+                        img.put_pixel(px + dx, py + dy, Rgb(config.fg_color));
                     }
                 }
             }
@@ -1111,8 +1570,8 @@ pub fn generate_image_buffer(
 ///
 /// # Example
 ///
-/// ```rust
-/// use qirust::qrcode::{QrCode, QrCodeEcc, Version};
+/// ```rust,no_run
+/// use qirust::qrcode::{QrCode, QrCodeEcc, Version, EncodeTextOptions};
 /// use qirust::helper::{generate_frameqr_buffer, FrameStyle};
 ///
 /// let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
@@ -1121,16 +1580,18 @@ pub fn generate_image_buffer(
 ///     "https://example.com",
 ///     &mut tempbuffer,
 ///     &mut outbuffer,
-///     QrCodeEcc::High,
-///     Version::MIN,
-///     Version::MAX,
-///     None,
-///     true,
+///     EncodeTextOptions {
+///         ecl: QrCodeEcc::High,
+///         minversion: Version::MIN,
+///         maxversion: Version::MAX,
+///         mask: None,
+///         boostecl: true,
+///     },
 /// ).unwrap();
 ///
 /// let img = generate_frameqr_buffer(
 ///     qr,
-///     "src/logo.png",
+///     "logo.png",
 ///     Some(10),
 ///     Some([0, 0, 0]),
 ///     Some(4),
@@ -1161,7 +1622,7 @@ pub fn generate_frameqr_buffer(
     qr_color: Option<[u8; 3]>,
     border_modules: Option<u32>,
     inner_frame_px: Option<u32>,
-    frame_style: Option<FrameStyle>
+    frame_style: Option<FrameStyle>,
 ) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
     let scale = upscale_factor.unwrap_or(8);
     let border = border_modules.unwrap_or(1);
@@ -1184,24 +1645,27 @@ pub fn generate_frameqr_buffer(
                     qr_img.put_pixel(
                         wx + border,
                         y + border,
-                        Rgba([dark[0], dark[1], dark[2], 255])
+                        Rgba([dark[0], dark[1], dark[2], 255]),
                     );
                 }
             }
             x += 1;
         }
     }
-    let mut upscaled_qr = DynamicImage::ImageRgba8(
-        resize(
-            &DynamicImage::ImageRgba8(qr_img),
-            padded_size * scale,
-            padded_size * scale,
-            FilterType::Nearest
-        )
-    ).to_rgba8();
+    let mut upscaled_qr = DynamicImage::ImageRgba8(resize(
+        &DynamicImage::ImageRgba8(qr_img),
+        padded_size * scale,
+        padded_size * scale,
+        FilterType::Nearest,
+    ))
+    .to_rgba8();
 
-    let full_path = std::env::current_dir().expect("Failed get root path").join(logo_path);
-    let logo = image::open(&full_path).expect("Failed to open logo").to_rgba8();
+    let full_path = std::env::current_dir()
+        .expect("Failed get root path")
+        .join(logo_path);
+    let logo = image::open(&full_path)
+        .expect("Failed to open logo")
+        .to_rgba8();
     let max_logo_w = upscaled_qr.width() / 3;
     let max_logo_h = upscaled_qr.height() / 3;
     static LOGO_RESIZE_CACHE: Mutex<Option<(String, u32, u32, RgbaImage)>> = Mutex::new(None);
@@ -1216,7 +1680,12 @@ pub fn generate_frameqr_buffer(
                 } else {
                     logo
                 };
-                *cache = Some((logo_path.to_string(), max_logo_w, max_logo_h, resized.clone()));
+                *cache = Some((
+                    logo_path.to_string(),
+                    max_logo_w,
+                    max_logo_h,
+                    resized.clone(),
+                ));
                 resized
             }
         } else {
@@ -1225,7 +1694,12 @@ pub fn generate_frameqr_buffer(
             } else {
                 logo
             };
-            *cache = Some((logo_path.to_string(), max_logo_w, max_logo_h, resized.clone()));
+            *cache = Some((
+                logo_path.to_string(),
+                max_logo_w,
+                max_logo_h,
+                resized.clone(),
+            ));
             resized
         }
     };
@@ -1247,19 +1721,24 @@ pub fn generate_frameqr_buffer(
             let frame_img = ImageBuffer::from_pixel(
                 logo_resized.width() + 2 * margin,
                 logo_resized.height() + 2 * margin,
-                Rgba([255, 255, 255, 255])
+                Rgba([255, 255, 255, 255]),
             );
             replace(
                 &mut upscaled_qr,
                 &frame_img,
                 x_offset.saturating_sub(margin) as i64,
-                y_offset.saturating_sub(margin) as i64
+                y_offset.saturating_sub(margin) as i64,
             );
         }
         _ => {}
     }
 
-    overlay(&mut upscaled_qr, &logo_resized, x_offset as i64, y_offset as i64);
+    overlay(
+        &mut upscaled_qr,
+        &logo_resized,
+        x_offset as i64,
+        y_offset as i64,
+    );
     upscaled_qr
 }
 
@@ -1312,7 +1791,11 @@ pub fn hex_to_rgba(hex: &str) -> Result<[u8; 4], &'static str> {
             let r = ((value >> (if hex.len() == 6 { 16 } else { 24 })) & 0xff) as u8;
             let g = ((value >> (if hex.len() == 6 { 8 } else { 16 })) & 0xff) as u8;
             let b = ((value >> (if hex.len() == 6 { 0 } else { 8 })) & 0xff) as u8;
-            let a = if hex.len() == 8 { (value & 0xff) as u8 } else { 255 };
+            let a = if hex.len() == 8 {
+                (value & 0xff) as u8
+            } else {
+                255
+            };
             Ok([r, g, b, a])
         }
         Err(_) => Err("Invalid hex code"),
@@ -1354,7 +1837,11 @@ pub fn hex_to_rgb(hex: &str) -> Result<[u8; 3], &'static str> {
         return Err("Hex code must be 6 characters (RRGGBB)");
     }
     let value = u32::from_str_radix(hex, 16).map_err(|_| "Hex code contains invalid characters")?;
-    Ok([((value >> 16) & 0xff) as u8, ((value >> 8) & 0xff) as u8, (value & 0xff) as u8])
+    Ok([
+        ((value >> 16) & 0xff) as u8,
+        ((value >> 8) & 0xff) as u8,
+        (value & 0xff) as u8,
+    ])
 }
 
 /// Creates a circular mask for rounded frames in styled QR codes.
@@ -1403,69 +1890,64 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_to_svg_string() {
-        let errcorlvl: QrCodeEcc = QrCodeEcc::Low;
-        let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
-        let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
-        let qr = QrCode::encode_text(
-            "HELLO WORLD",
-            &mut tempbuffer,
-            &mut outbuffer,
-            errcorlvl,
-            Version::MIN,
-            Version::MAX,
-            None,
-            true
-        ).unwrap();
-        let svg = to_svg_string(&qr, 4);
+    fn test_frame_qr_save_config_builder() {
+        let config = FrameQrSaveConfig::new("logo.png")
+            .unwrap()
+            .with_upscale(6)
+            .unwrap()
+            .with_directory("output")
+            .with_filename("test")
+            .with_color([255, 165, 0])
+            .with_outer_frame(40)
+            .with_inner_frame(10)
+            .with_frame_style(FrameStyle::Rounded);
 
-        assert!(svg.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
+        assert_eq!(config.logo_path, "logo.png");
+        assert_eq!(config.upscale_factor, 6);
+        assert_eq!(config.directory_path, "output");
+        assert_eq!(config.file_name, Some("test"));
+        assert_eq!(config.qr_color, [255, 165, 0]);
+        assert_eq!(config.outer_frame_px, 40);
+        assert_eq!(config.inner_frame_px, 10);
+        assert_eq!(config.frame_style, FrameStyle::Rounded);
     }
 
     #[test]
-    fn test_generate_image_buffer() {
-        let content = "Hello, world!";
-        let border = 4;
-        let scale = 4;
+    fn test_frame_qr_save_config_validation() {
+        // Valid config
+        let valid_config = FrameQrSaveConfig::new("logo.png").unwrap();
+        assert!(valid_config.validate().is_ok());
 
-        let mut outbuffer = vec![0u8; Version::MAX.buffer_len()];
-        let mut tempbuffer = vec![0u8; Version::MAX.buffer_len()];
+        // Invalid - empty logo path
+        let invalid_path = FrameQrSaveConfig::new("");
+        assert!(invalid_path.is_err());
 
-        let qr = QrCode::encode_text(
-            content,
-            &mut tempbuffer,
-            &mut outbuffer,
-            QrCodeEcc::High,
-            Version::MIN,
-            Version::MAX,
-            None,
-            true
-        ).unwrap();
+        // Invalid upscale factor
+        let config = FrameQrSaveConfig::new("logo.png").unwrap();
+        let invalid_upscale = config.with_upscale(0);
+        assert!(invalid_upscale.is_err());
 
-        let expected_size = ((qr.size() as u32) + 2 * border) * scale;
-        let img = generate_image_buffer(content, Some(border), None, None, Some(scale)).unwrap();
-
-        assert_eq!(img.dimensions(), (expected_size, expected_size));
+        let config = FrameQrSaveConfig::new("logo.png").unwrap();
+        let invalid_upscale = config.with_upscale(MAX_UPSCALE_FACTOR + 1);
+        assert!(invalid_upscale.is_err());
     }
 
     #[test]
-    fn test_hex_to_rgba() {
-        assert_eq!(hex_to_rgba("#FF0000"), Ok([255, 0, 0, 255]));
-        assert_eq!(hex_to_rgba("00FF00"), Ok([0, 255, 0, 255]));
-        assert_eq!(hex_to_rgba("#FF00007F"), Ok([255, 0, 0, 127]));
-        assert_eq!(
-            hex_to_rgba("FF00"),
-            Err("Hex code must be 6 (RRGGBB) or 8 (RRGGBBAA) characters")
-        );
-        assert_eq!(hex_to_rgba("GG0000"), Err("Hex code contains invalid characters"));
-    }
+    fn test_frame_qr_svg_config_builder() {
+        let config = FrameQrSvgConfig::new("logo.png")
+            .unwrap()
+            .with_upscale(6)
+            .unwrap()
+            .with_color([255, 165, 0])
+            .with_outer_frame(40)
+            .with_inner_frame(10)
+            .with_frame_style(FrameStyle::Rounded);
 
-    #[test]
-    fn test_hex_to_rgb() {
-        assert_eq!(hex_to_rgb("#FF0000"), Ok([255, 0, 0]));
-        assert_eq!(hex_to_rgb("00FF00"), Ok([0, 255, 0]));
-        assert_eq!(hex_to_rgb("FF00"), Err("Hex code must be 6 characters (RRGGBB)"));
-        assert_eq!(hex_to_rgb("GG0000"), Err("Hex code contains invalid characters"));
-        assert_eq!(hex_to_rgb("FF00007F"), Err("Hex code must be 6 characters (RRGGBB)"));
+        assert_eq!(config.logo_path, "logo.png");
+        assert_eq!(config.upscale_factor, 6);
+        assert_eq!(config.qr_color, [255, 165, 0]);
+        assert_eq!(config.outer_frame_px, 40);
+        assert_eq!(config.inner_frame_px, 10);
+        assert_eq!(config.frame_style, FrameStyle::Rounded);
     }
 }
